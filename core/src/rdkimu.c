@@ -11,8 +11,9 @@
 #include <math.h>
 #include <gpiod.h>
 
-#include "rdk_imu_module.h"
+#include "rdkimu_priv.h"
 
+/* ============================== Macro ============================== */
 #ifdef RDK_IMU_DEBUG
 #define RDK_DEBUG_PRINTF(fmt, ...) \
     printf("[%s:%d] %s(): " fmt, __FILE__, __LINE__, __func__, ##__VA_ARGS__)
@@ -34,6 +35,10 @@
 #define rdk_imu_gyro_update(reg, data, mask) \
     (st->gyro_bus.ops->update(&st->gyro_bus, (reg), (data), (mask)))
 
+/* ============================== Utility functions ============================== */
+/**
+ * @brief 毫秒级 Delay
+ */
 static void sleep_ms(int milliseconds) {
     struct timespec ts;
     ts.tv_sec = milliseconds / 1000;
@@ -41,30 +46,9 @@ static void sleep_ms(int milliseconds) {
     nanosleep(&ts, NULL);
 }
 
-rdk_imu_state_t *rdk_imu_create_default(
-    void)
-{
-    rdk_imu_state_t *st = malloc(sizeof(rdk_imu_state_t));
-    if(!st)return NULL;
-    
-    memset(st, 0, sizeof(*st));
-    st->enable = 0;
-
-    return st;
-}
-
-rdk_imu_err_t rdk_imu_destroy(
-    rdk_imu_state_t *st)
-{
-    if(!st)return RDK_IMU_ERR_PARAM；
-
-    if(st->imu_fifo.buffer)free(st->imu_fifo.buffer);
-
-    if(st)free(st);
-
-    return RDK_IMU_OK;
-}
-
+/**
+ * @brief 初始化 rdk_imu_fifo_t 结构体
+ */
 static rdk_imu_err_t rdk_imu_fifo_init(
     rdk_imu_fifo_t *fifo, 
     unsigned int size,
@@ -87,25 +71,49 @@ static rdk_imu_err_t rdk_imu_fifo_init(
     return RDK_IMU_OK;
 }
 
+/**
+ * @brief 反初始化 rdk_imu_fifo_t 结构体
+ */
+static void rdk_imu_fifo_deinit(
+    rdk_imu_fifo_t *fifo)
+{
+    free(fifo->buffer);
+    fifo->buffer = NULL;
+    fifo->size = fifo->mask = 0;
+    fifo->head = fifo->tail = 0;
+}
+
+/**
+ * @brief 返回 bool：FIFO 是否为空
+ */
 static inline int rdk_imu_fifo_is_empty(
     rdk_imu_fifo_t *fifo)
 {
     return (fifo->head == fifo->tail);
 }
 
+/**
+ * @brief 返回 bool：FIFO 是否为满
+ */
 static inline int rdk_imu_fifo_is_full(
     rdk_imu_fifo_t *fifo)
 {
     return ((fifo->head + 1) & fifo->mask) == fifo->tail;
 }
 
+/**
+ * @brief 返回 FIFO 计数
+ */
 static unsigned int rdk_imu_fifo_count(
     const rdk_imu_fifo_t *fifo)
 {
     return (fifo->head - fifo->tail) & fifo->mask;
 }
 
-rdk_imu_err_t rdk_imu_fifo_push(
+/**
+ * @brief FIFO 存数据
+ */
+static rdk_imu_err_t rdk_imu_fifo_push(
     rdk_imu_fifo_t *fifo, 
     rdk_imu_6_axis_data_t *data)
 {
@@ -128,7 +136,10 @@ rdk_imu_err_t rdk_imu_fifo_push(
     return RDK_IMU_OK;
 }
     
-rdk_imu_err_t rdk_imu_fifo_pop(
+/**
+ * @brief FIFO 取数据
+ */
+static rdk_imu_err_t rdk_imu_fifo_pop(
     rdk_imu_fifo_t *fifo, 
     rdk_imu_6_axis_data_t *data)
 {
@@ -140,21 +151,212 @@ rdk_imu_err_t rdk_imu_fifo_pop(
     return RDK_IMU_OK;
 }
 
-static void rdk_imu_fifo_deinit(
-    rdk_imu_fifo_t *fifo)
+/**
+ * @brief 解析数据
+ */
+static void parse_accel_data(
+    uint8_t *raw,
+    rdk_imu_6_axis_data_t *data,
+    rdk_imu_state_t *st)
 {
-    free(fifo->buffer);
-    fifo->buffer = NULL;
-    fifo->size = fifo->mask = 0;
-    fifo->head = fifo->tail = 0;
+    int16_t raw16[3];
+    raw16[0] = raw[IMU_ACCEL_X_OFFSET] | raw[IMU_ACCEL_X_OFFSET+1]<<8;
+    raw16[1] = raw[IMU_ACCEL_Y_OFFSET] | raw[IMU_ACCEL_Y_OFFSET+1]<<8;
+    raw16[2] = raw[IMU_ACCEL_Z_OFFSET] | raw[IMU_ACCEL_Z_OFFSET+1]<<8;
+
+    data->accel.valid = 1;
+    data->accel.x = raw16[0] * st->accel_data_scale + st->accel_data_bais;
+    data->accel.y = raw16[1] * st->accel_data_scale + st->accel_data_bais;
+    data->accel.z = raw16[2] * st->accel_data_scale + st->accel_data_bais;
+
+    return ;
 }
+
+/**
+ * @brief 解析数据
+ */
+static void parse_gyro_data(
+    uint8_t *raw,
+    rdk_imu_6_axis_data_t *data,
+    rdk_imu_state_t *st)
+{
+    int16_t raw16[3];
+    raw16[0] = raw[IMU_GYRO_X_OFFSET] | raw[IMU_GYRO_X_OFFSET+1]<<8;
+    raw16[1] = raw[IMU_GYRO_Y_OFFSET] | raw[IMU_GYRO_Y_OFFSET+1]<<8;
+    raw16[2] = raw[IMU_GYRO_Z_OFFSET] | raw[IMU_GYRO_Z_OFFSET+1]<<8;
+
+    data->gyro.valid = 1;
+    data->gyro.x = raw16[0] * st->gyro_data_scale + st->gyro_data_bais;
+    data->gyro.y = raw16[1] * st->gyro_data_scale + st->gyro_data_bais;
+    data->gyro.z = raw16[2] * st->gyro_data_scale + st->gyro_data_bais;
+
+    return ;
+}
+
+/**
+ * @brief 线程函数
+ */
+static void *rdk_imu_accel_irq_thread(
+    void *arg)
+{
+    rdk_imu_state_t *st = (rdk_imu_state_t *)arg;
+    struct timespec timeout = {
+        .tv_sec = st->irq_thread_timeout_ns / 1000000000, 
+        .tv_nsec = st->irq_thread_timeout_ns % 1000000000,
+    };
+
+    while(st->accel_running){
+        int wait_ret = gpiod_line_event_wait(st->accel_drdy_gpio_line, &timeout);
+        if(wait_ret < 0){
+            // perror("gpiod_line_event_wait (accel)");
+            break;   // 发生严重错误，退出线程
+        }
+        else if(wait_ret == 0){
+            // 仅在设置超时且超时发生时进入这里，阻塞等待不会触发
+            continue;
+        }
+        /* 读取事件，清除中断标志，同时获取时间戳 */
+        struct gpiod_line_event event;
+        if(gpiod_line_event_read(st->accel_drdy_gpio_line, &event) < 0){
+            // perror("gpiod_line_event_read (accel)");
+            continue;
+        }
+        uint8_t raw[IMU_ACCEL_DATA_LEN] = {0};
+        if(rdk_imu_accel_read(IMU_ACCEL_REG_DATA, raw, IMU_ACCEL_DATA_LEN) != RDK_IMU_OK){
+            RDK_DEBUG_PRINTF("Failed to read accel data\n");
+            continue;
+        }
+        rdk_imu_6_axis_data_t data;
+        memset(&data, 0, sizeof(data));
+        parse_accel_data(raw, &data, st);
+        data.accel.timestamp_ns = (uint64_t)event.ts.tv_sec * 1000000000ULL + (uint64_t)event.ts.tv_nsec;
+
+        pthread_mutex_lock(&st->mutex);
+        rdk_imu_fifo_push(&st->imu_fifo, &data);
+        pthread_mutex_unlock(&st->mutex);
+    }
+    return NULL;
+}
+
+/**
+ * @brief 线程函数
+ */
+static void *rdk_imu_gyro_irq_thread(
+    void *arg)
+{
+    rdk_imu_state_t *st = (rdk_imu_state_t *)arg;
+    struct timespec timeout = {
+        .tv_sec = st->irq_thread_timeout_ns / 1000000000, 
+        .tv_nsec = st->irq_thread_timeout_ns % 1000000000,
+    };
+
+    while(st->gyro_running){
+        int wait_ret = gpiod_line_event_wait(st->gyro_drdy_gpio_line, &timeout);
+        if(wait_ret < 0){
+            // perror("gpiod_line_event_wait (gyro)");
+            break;   // 发生严重错误，退出线程
+        }
+        else if(wait_ret == 0){
+            // 仅在设置超时且超时发生时进入这里，阻塞等待不会触发
+            continue;
+        }
+        /* 读取事件，清除中断标志，同时获取时间戳 */
+        struct gpiod_line_event event;
+        if(gpiod_line_event_read(st->gyro_drdy_gpio_line, &event) < 0){
+            // perror("gpiod_line_event_read (gyro)");
+            continue;
+        }
+        uint8_t raw[IMU_GYRO_DATA_LEN] = {0};
+        if(rdk_imu_gyro_read(IMU_GYRO_REG_DATA, raw, IMU_GYRO_DATA_LEN) != RDK_IMU_OK){
+            RDK_DEBUG_PRINTF("Failed to read gyro data\n");
+            continue;
+        }
+        rdk_imu_6_axis_data_t data = {0};
+        memset(&data, 0, sizeof(data));
+        parse_gyro_data(raw, &data, st);
+        data.gyro.timestamp_ns = (uint64_t)event.ts.tv_sec * 1000000000ULL + (uint64_t)event.ts.tv_nsec;
+
+        pthread_mutex_lock(&st->mutex);
+        rdk_imu_fifo_push(&st->imu_fifo, &data);
+        pthread_mutex_unlock(&st->mutex);
+    }
+    return NULL;
+}
+
+/**
+ * @brief 在两个有效三轴数据之间进行线性插值，得到目标时刻的值
+ */
+static void interpolate_3axis(
+    const rdk_imu_3_axis_data_t *prev,
+    const rdk_imu_3_axis_data_t *next,
+    uint64_t target_ns,
+    rdk_imu_3_axis_data_t *out)
+{
+    if(!prev || !next || !out)return;
+
+    if(next->timestamp_ns == prev->timestamp_ns){
+        *out = *prev;
+        out->timestamp_ns = target_ns;
+        return;
+    }
+
+    /* 防止时间戳无符号下溢出 */
+    int64_t dt = (int64_t)(target_ns - prev->timestamp_ns);
+    int64_t range = (int64_t)(next->timestamp_ns - prev->timestamp_ns);
+    float ratio = (float)dt / (float)range;  
+    // float ratio = (float)(target_ns - prev->timestamp_ns) /
+    //                (float)(next->timestamp_ns - prev->timestamp_ns);
+
+    out->x = prev->x + (next->x - prev->x) * ratio;
+    out->y = prev->y + (next->y - prev->y) * ratio;
+    out->z = prev->z + (next->z - prev->z) * ratio;
+    out->timestamp_ns = target_ns;
+    out->valid = 1;
+}
+
+/**
+ * @brief 对比并返回 rdk_imu_6_axis_data_t 中两侧时间戳中数值更大的一方
+ */
+static inline uint64_t rdk_imu_data_timestamp_ns(
+    rdk_imu_6_axis_data_t data)
+{
+    return data.accel.timestamp_ns > data.gyro.timestamp_ns ?
+        data.accel.timestamp_ns : data.gyro.timestamp_ns;
+}
+
+/* ============================== API Implementation ============================== */
+rdk_imu_state_t *rdk_imu_create_default(
+    void)
+{
+    rdk_imu_state_t *st = malloc(sizeof(rdk_imu_state_t));
+    if(!st)return NULL;
+    
+    memset(st, 0, sizeof(*st));
+    st->enable = 0;
+
+    return st;
+}
+
+rdk_imu_err_t rdk_imu_destroy(
+    rdk_imu_state_t *st)
+{
+    if(!st)return RDK_IMU_ERR_PARAM;
+
+    if(st->imu_fifo.buffer)free(st->imu_fifo.buffer);
+
+    if(st)free(st);
+
+    return RDK_IMU_OK;
+}
+
 
 rdk_imu_err_t rdk_imu_device_init(
     rdk_imu_state_t* st,
     rdk_imu_config_t config)
 {
-    rdk_imu_err_t ret;
+    if(!st)return RDK_IMU_CAN_NOT_RELEASE;
 
+    rdk_imu_err_t ret;
     uint8_t reg_value[2];
 
     /* Reset IMU */ 
@@ -234,10 +436,10 @@ rdk_imu_err_t rdk_imu_device_init(
         IMU_ACCEL_RANGE_MASK << IMU_ACCEL_RANGE_OFFSET);
     if(ret)return ret;
     switch(config.accel_range){
-        case RDK_IMU_ACCEL_3G: st->accel_data_scale = 9.8 * 3.0 / 32768; st->accel_data_bais = 0.0; break;
-        case RDK_IMU_ACCEL_6G: st->accel_data_scale = 9.8 * 6.0 / 32768; st->accel_data_bais = 0.0; break;
-        case RDK_IMU_ACCEL_12G: st->accel_data_scale = 9.8 * 12.0 / 32768; st->accel_data_bais = 0.0; break;
-        case RDK_IMU_ACCEL_24G: st->accel_data_scale = 9.8 * 24.0 / 32768; st->accel_data_bais = 0.0; break;
+        case RDK_IMU_ACCEL_3G: st->accel_data_scale = 9.80665 * 3.0 / 32768; st->accel_data_bais = 0.0; break;
+        case RDK_IMU_ACCEL_6G: st->accel_data_scale = 9.80665 * 6.0 / 32768; st->accel_data_bais = 0.0; break;
+        case RDK_IMU_ACCEL_12G: st->accel_data_scale = 9.80665 * 12.0 / 32768; st->accel_data_bais = 0.0; break;
+        case RDK_IMU_ACCEL_24G: st->accel_data_scale = 9.80665 * 24.0 / 32768; st->accel_data_bais = 0.0; break;
     }
     RDK_DEBUG_PRINTF("Successfully set accel configures.\n");
     
@@ -368,7 +570,7 @@ rdk_imu_err_t rdk_imu_device_init(
         }
 
         line = gpiod_chip_get_line(st->gyro_drdy_gpio_chip, config.gyro_drdy_gpio_line);
-        if (!line) {
+        if(!line) {
             RDK_DEBUG_PRINTF("Failed to get gyro line %u\n", config.gyro_drdy_gpio_line);
             gpiod_chip_close(st->gyro_drdy_gpio_chip);
             gpiod_line_release(st->accel_drdy_gpio_line);
@@ -446,125 +648,6 @@ rdk_imu_err_t rdk_imu_device_deinit(
     return RDK_IMU_OK;
 }
 
-static void parse_accel_data(
-    uint8_t *raw,
-    rdk_imu_6_axis_data_t *data,
-    rdk_imu_state_t *st)
-{
-    int16_t raw16[3];
-    raw16[0] = raw[IMU_ACCEL_X_OFFSET] | raw[IMU_ACCEL_X_OFFSET+1]<<8;
-    raw16[1] = raw[IMU_ACCEL_Y_OFFSET] | raw[IMU_ACCEL_Y_OFFSET+1]<<8;
-    raw16[2] = raw[IMU_ACCEL_Z_OFFSET] | raw[IMU_ACCEL_Z_OFFSET+1]<<8;
-
-    data->accel.valid = 1;
-    data->accel.x = raw16[0] * st->accel_data_scale + st->accel_data_bais;
-    data->accel.y = raw16[1] * st->accel_data_scale + st->accel_data_bais;
-    data->accel.z = raw16[2] * st->accel_data_scale + st->accel_data_bais;
-
-    return ;
-}
-
-static void parse_gyro_data(
-    uint8_t *raw,
-    rdk_imu_6_axis_data_t *data,
-    rdk_imu_state_t *st)
-{
-    int16_t raw16[3];
-    raw16[0] = raw[IMU_GYRO_X_OFFSET] | raw[IMU_GYRO_X_OFFSET+1]<<8;
-    raw16[1] = raw[IMU_GYRO_Y_OFFSET] | raw[IMU_GYRO_Y_OFFSET+1]<<8;
-    raw16[2] = raw[IMU_GYRO_Z_OFFSET] | raw[IMU_GYRO_Z_OFFSET+1]<<8;
-
-    data->gyro.valid = 1;
-    data->gyro.x = raw16[0] * st->gyro_data_scale + st->gyro_data_bais;
-    data->gyro.y = raw16[1] * st->gyro_data_scale + st->gyro_data_bais;
-    data->gyro.z = raw16[2] * st->gyro_data_scale + st->gyro_data_bais;
-
-    return ;
-}
-
-static void *rdk_imu_accel_irq_thread(
-    void *arg)
-{
-    rdk_imu_state_t *st = (rdk_imu_state_t *)arg;
-    struct timespec timeout = {
-        .tv_sec = st->irq_thread_timeout_ns / 1000000000, 
-        .tv_nsec = st->irq_thread_timeout_ns % 1000000000,
-    };
-
-    while(st->accel_running){
-        int wait_ret = gpiod_line_event_wait(st->accel_drdy_gpio_line, &timeout);
-        if(wait_ret < 0){
-            // perror("gpiod_line_event_wait (accel)");
-            break;   // 发生严重错误，退出线程
-        }
-        else if(wait_ret == 0){
-            // 仅在设置超时且超时发生时进入这里，阻塞等待不会触发
-            continue;
-        }
-        /* 读取事件，清除中断标志，同时获取时间戳 */
-        struct gpiod_line_event event;
-        if(gpiod_line_event_read(st->accel_drdy_gpio_line, &event) < 0){
-            // perror("gpiod_line_event_read (accel)");
-            continue;
-        }
-        uint8_t raw[IMU_ACCEL_DATA_LEN] = {0};
-        if(rdk_imu_accel_read(IMU_ACCEL_REG_DATA, raw, IMU_ACCEL_DATA_LEN) != RDK_IMU_OK){
-            RDK_DEBUG_PRINTF("Failed to read accel data\n");
-            continue;
-        }
-        rdk_imu_6_axis_data_t data;
-        memset(&data, 0, sizeof(data));
-        parse_accel_data(raw, &data, st);
-        data.accel.timestamp_ns = (uint64_t)event.ts.tv_sec * 1000000000ULL + (uint64_t)event.ts.tv_nsec;
-
-        pthread_mutex_lock(&st->mutex);
-        rdk_imu_fifo_push(&st->imu_fifo, &data);
-        pthread_mutex_unlock(&st->mutex);
-    }
-    return NULL;
-}
-
-static void *rdk_imu_gyro_irq_thread(
-    void *arg)
-{
-    rdk_imu_state_t *st = (rdk_imu_state_t *)arg;
-    struct timespec timeout = {
-        .tv_sec = st->irq_thread_timeout_ns / 1000000000, 
-        .tv_nsec = st->irq_thread_timeout_ns % 1000000000,
-    };
-
-    while(st->gyro_running){
-        int wait_ret = gpiod_line_event_wait(st->gyro_drdy_gpio_line, &timeout);
-        if(wait_ret < 0){
-            // perror("gpiod_line_event_wait (gyro)");
-            break;   // 发生严重错误，退出线程
-        }
-        else if(wait_ret == 0){
-            // 仅在设置超时且超时发生时进入这里，阻塞等待不会触发
-            continue;
-        }
-        /* 读取事件，清除中断标志，同时获取时间戳 */
-        struct gpiod_line_event event;
-        if(gpiod_line_event_read(st->gyro_drdy_gpio_line, &event) < 0){
-            // perror("gpiod_line_event_read (gyro)");
-            continue;
-        }
-        uint8_t raw[IMU_GYRO_DATA_LEN] = {0};
-        if(rdk_imu_gyro_read(IMU_GYRO_REG_DATA, raw, IMU_GYRO_DATA_LEN) != RDK_IMU_OK){
-            RDK_DEBUG_PRINTF("Failed to read gyro data\n");
-            continue;
-        }
-        rdk_imu_6_axis_data_t data = {0};
-        memset(&data, 0, sizeof(data));
-        parse_gyro_data(raw, &data, st);
-        data.gyro.timestamp_ns = (uint64_t)event.ts.tv_sec * 1000000000ULL + (uint64_t)event.ts.tv_nsec;
-
-        pthread_mutex_lock(&st->mutex);
-        rdk_imu_fifo_push(&st->imu_fifo, &data);
-        pthread_mutex_unlock(&st->mutex);
-    }
-    return NULL;
-}
 
 rdk_imu_err_t rdk_imu_enable(
     rdk_imu_state_t* st)
@@ -572,12 +655,12 @@ rdk_imu_err_t rdk_imu_enable(
     if(!st)return RDK_IMU_ERR_PARAM;
 
     /* 防止重复 enable */
-    pthread_mutex_lock(&st->mutex) /* 消除竞态条件 */
+    pthread_mutex_lock(&st->mutex); /* 消除竞态条件 */
     if(st->enable){
-        pthread_mutex_unlock(&st->mutex)
+        pthread_mutex_unlock(&st->mutex);
         return RDK_IMU_DEVICE_BUSY;
     }
-    pthread_mutex_unlock(&st->mutex)
+    pthread_mutex_unlock(&st->mutex);
     
     pthread_attr_t attr;
     struct sched_param param;
@@ -676,41 +759,10 @@ rdk_imu_err_t rdk_imu_disable(
     return RDK_IMU_OK;
 }
 
-/**
- * 在两个有效三轴数据之间进行线性插值，得到目标时刻的值
- */
-static void interpolate_3axis(
-    const rdk_imu_3_axis_data_t *prev,
-    const rdk_imu_3_axis_data_t *next,
-    uint64_t target_ns,
-    rdk_imu_3_axis_data_t *out)
-{
-    if(!prev || !next || !out)return;
-
-    if(next->timestamp_ns == prev->timestamp_ns){
-        *out = *prev;
-        out->timestamp_ns = target_ns;
-        return;
-    }
-
-    /* 防止时间戳无符号下溢出 */
-    int64_t dt = (int64_t)(target_ns - prev->timestamp_ns);
-    int64_t range = (int64_t)(next->timestamp_ns - prev->timestamp_ns);
-    float ratio = (float)dt / (float)range;  
-    // float ratio = (float)(target_ns - prev->timestamp_ns) /
-    //                (float)(next->timestamp_ns - prev->timestamp_ns);
-
-    out->x = prev->x + (next->x - prev->x) * ratio;
-    out->y = prev->y + (next->y - prev->y) * ratio;
-    out->z = prev->z + (next->z - prev->z) * ratio;
-    out->timestamp_ns = target_ns;
-    out->valid = 1;
-}
-
 rdk_imu_err_t rdk_imu_fifo_available(rdk_imu_state_t *st,
                                      uint32_t *count)
 {
-    if (!st || !count) return RDK_IMU_ERR_PARAM;
+    if(!st || !count)return RDK_IMU_ERR_PARAM;
 
     pthread_mutex_lock(&st->mutex);
     *count = rdk_imu_fifo_count(&st->imu_fifo);
@@ -725,7 +777,7 @@ rdk_imu_err_t rdk_imu_read_indep(
     rdk_imu_6_axis_data_t *data,
     uint32_t *count)
 {
-    if (!st || !data)return RDK_IMU_ERR_PARAM;
+    if(!st || !data)return RDK_IMU_ERR_PARAM;
 
     pthread_mutex_lock(&st->mutex);
 
@@ -741,13 +793,6 @@ rdk_imu_err_t rdk_imu_read_indep(
     pthread_mutex_unlock(&st->mutex);
 
     return RDK_IMU_OK;
-}
-
-static inline uint64_t rdk_imu_data_timestamp_ns(
-    rdk_imu_6_axis_data_t data)
-{
-    return data.accel.timestamp_ns > data.gyro.timestamp_ns ?
-        data.accel.timestamp_ns : data.gyro.timestamp_ns;
 }
 
 rdk_imu_err_t rdk_imu_read_fused(
@@ -774,6 +819,7 @@ rdk_imu_err_t rdk_imu_read_fused(
         // pthread_mutex_lock(&st->mutex);
         ret = rdk_imu_fifo_pop(&st->imu_fifo, &st->fuse_win[2]);
         pthread_mutex_unlock(&st->mutex);
+        if(ret)continue;
 
         /* 窗口还未初始化完全 */
         if(st->fuse_win[0].accel.valid == st->fuse_win[0].gyro.valid){
@@ -822,156 +868,4 @@ rdk_imu_err_t rdk_imu_read_fused(
     memmove(&st->fuse_win[0], &st->fuse_win[1], 2 * sizeof(st->fuse_win[0]));
 
     return RDK_IMU_OK;
-}
-
-// int main(){
-//     rdk_imu_err_t ret = RDK_IMU_OK;
-
-//     rdk_imu_state_t *st = rdk_imu_create_default();
-
-//     rdk_imu_bus_info_t bus_info;
-//     bus_info.interface = RDK_IMU_AUTO;
-//     bus_info.bus.spi.accel.speed_hz = 1000000;
-//     bus_info.bus.spi.gyro.speed_hz = 1000000;
-
-//     rdk_imu_config_t config;
-//     config.accel_drdy_int = RDK_IMU_INT1;
-//     config.accel_int_gpio_mode = RDK_IMU_PP_H;
-
-//     config.gyro_drdy_int = RDK_IMU_INT3;
-//     config.gyro_int_gpio_mode = RDK_IMU_PP_H;
-
-//     config.accel_drdy_gpio_chip = 4;
-//     config.accel_drdy_gpio_line = 2;
-
-//     config.gyro_drdy_gpio_chip = 3;
-//     config.gyro_drdy_gpio_line = 12;
-
-//     config.irq_priority = -1;
-//     config.irq_thread_timeout_ns = 1000000000;
-
-//     config.accel_bwp = RDK_IMU_OSR4;
-//     config.accel_range = RDK_IMU_ACCEL_24G;
-//     config.accel_odr = RDK_IMU_ACCEL_100;
-
-//     config.gyro_range = RDK_IMU_GYRO_2000DPS;
-//     config.gyro_bandwidth = RDK_IMU_ODR400_BW47;
-
-//     config.fifo_length = 256;
-//     config.fifo_mode = RDK_IMU_FIFO_OVERWRITE;
-
-//     ret = rdk_imu_bus_init(st, bus_info);
-//     printf("config output %d\n", ret);
-
-//     ret = rdk_imu_device_init(st, config);
-
-//     printf("config output %d\n", ret);
-
-//     ret = rdk_imu_enable(st);
-
-//     printf("config output %d\n", ret);
-
-//     sleep_ms(1000);
-
-//     // ret = rdk_imu_disable(st);
-//     // printf("config output %d\n", ret);
-
-//     rdk_imu_6_axis_data_t data;
-
-//     ret = rdk_imu_read_fused(st, &data, RDK_IMU_ACCEL, 1000000000);printf("config output %d\n", ret);
-
-//     return ret;
-// }
-int main(){
-    rdk_imu_err_t ret;
-
-    rdk_imu_state_t *st = rdk_imu_create_default();
-    if (!st) {
-        printf("create failed\n");
-        return -1;
-    }
-
-    rdk_imu_bus_info_t bus_info;
-    bus_info.interface = RDK_IMU_AUTO;
-    bus_info.bus.spi.accel.speed_hz = 1000000;
-    bus_info.bus.spi.gyro.speed_hz  = 1000000;
-
-    rdk_imu_config_t config;
-    config.accel_drdy_int       = RDK_IMU_INT1;
-    config.accel_int_gpio_mode  = RDK_IMU_PP_H;
-    config.accel_drdy_gpio_chip = 4;
-    config.accel_drdy_gpio_line = 2;
-
-    config.gyro_drdy_int        = RDK_IMU_INT3;
-    config.gyro_int_gpio_mode   = RDK_IMU_PP_H;
-    config.gyro_drdy_gpio_chip  = 3;
-    config.gyro_drdy_gpio_line  = 12;
-
-    config.irq_priority          = -1;
-    config.irq_thread_timeout_ns = 1000000000;
-
-    config.accel_bwp   = RDK_IMU_OSR4;
-    config.accel_range = RDK_IMU_ACCEL_24G;
-    config.accel_odr   = RDK_IMU_ACCEL_100;
-
-    config.gyro_range     = RDK_IMU_GYRO_2000DPS;
-    config.gyro_bandwidth = RDK_IMU_ODR400_BW47;
-
-    config.fifo_length = 256;
-    config.fifo_mode   = RDK_IMU_FIFO_OVERWRITE;
-
-    ret = rdk_imu_bus_init(st, bus_info);
-    printf("bus_init: %d\n", ret);
-    if (ret) goto cleanup;
-
-    ret = rdk_imu_device_init(st, config);
-    printf("device_init: %d\n", ret);
-    if (ret) goto cleanup;
-
-    ret = rdk_imu_enable(st);
-    printf("enable: %d\n", ret);
-    if (ret) goto cleanup;
-
-    printf("Reading fused data (Accel primary, Gyro interpolated)...\n");
-
-    uint64_t start_ts = 0;
-    int frame_count = 0;
-
-    while (1) {
-        rdk_imu_6_axis_data_t data;
-        ret = rdk_imu_read_fused(st, &data, RDK_IMU_ACCEL, 20000000ULL);
-        if (ret != RDK_IMU_OK) {
-            printf("read_fused error: %d\n", ret);
-            break;
-        }
-
-        frame_count++;
-        if (frame_count == 1) {
-            start_ts = data.accel.timestamp_ns;  // 记录第一帧时间戳
-        }
-
-        // 每 100 帧计算并输出频率
-        if (frame_count % 100 == 0) {
-            uint64_t now_ts = data.accel.timestamp_ns;
-            double dt_sec = (now_ts - start_ts) / 1e9;
-            double freq = frame_count / dt_sec;
-            printf("--- Frames: %d, Freq: %.2f Hz ---\n", frame_count, freq);
-
-            // 重置计数器，从下一帧开始重新统计
-            frame_count = 0;
-            start_ts = 0;
-        }
-
-        // 输出当前帧数据（若不想刷屏可注释掉下面这行）
-        printf("A[%7.3f %7.3f %7.3f] G[%7.3f %7.3f %7.3f] ts: %llu\n",
-               data.accel.x, data.accel.y, data.accel.z,
-               data.gyro.x, data.gyro.y, data.gyro.z,
-               (unsigned long long)data.accel.timestamp_ns);
-    }
-
-cleanup:
-    rdk_imu_disable(st);
-    rdk_imu_device_deinit(st);
-    rdk_imu_destroy(st);
-    return ret;
 }

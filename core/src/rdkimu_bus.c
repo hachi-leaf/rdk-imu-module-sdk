@@ -1,6 +1,9 @@
-/*
+/**
  * Copyright (c) 2026 Leaf. D-Robotics.
  * SPDX-License-Identifier: MIT
+ *
+ * 本文件实现 rdk_imu.h 中的 rdk_imu_bus_init 和 rdk_imu_bus_deinit 函数
+ * 核心目的是实现 I2C 和 SPI 设备的自动扫描，并将统一抽象接口
  */
 #include <stdint.h>
 #include <stdio.h>
@@ -15,8 +18,9 @@
 #include <linux/i2c.h>
 #include <linux/spi/spidev.h>
 
-#include "rdk_imu_module.h"
+#include "rdkimu_priv.h"
 
+/* ============================== Macro ============================== */
 #ifdef RDK_IMU_DEBUG
 #define RDK_DEBUG_PRINTF(fmt, ...) \
     printf("[%s:%d] %s(): " fmt, __FILE__, __LINE__, __func__, ##__VA_ARGS__)
@@ -24,7 +28,7 @@
 #define RDK_DEBUG_PRINTF(fmt, ...) ((void)0)
 #endif
 
-/* ============================== I2C 底层实现 ============================== */
+/* ============================== I2C Underlying function ============================== */
 static rdk_imu_err_t rdk_imu_i2c_write(
     int fd, 
     uint8_t addr, 
@@ -38,22 +42,12 @@ static rdk_imu_err_t rdk_imu_i2c_write(
     buf[0] = reg;
     memcpy(buf + 1, data, len);
 
-    struct i2c_msg msg = {
-        .addr = addr,
-        .flags = 0, // 写标志
-        .len = len + 1,
-        .buf = buf,
-    };
+    struct i2c_msg msg ={.addr = addr, .flags = 0, .len = len + 1, .buf = buf,};
 
-    struct i2c_rdwr_ioctl_data ioctl_data = {
-        .msgs  = &msg,
-        .nmsgs = 1,
-    };
+    struct i2c_rdwr_ioctl_data ioctl_data ={.msgs  = &msg, .nmsgs = 1,};
 
-    if(ioctl(fd, I2C_RDWR, &ioctl_data) < 0) {
-        // perror("i2c_write failed");
-        return RDK_IMU_I2C_WRITE_ERR;
-    }
+    if(ioctl(fd, I2C_RDWR, &ioctl_data) < 0)return RDK_IMU_I2C_WRITE_ERR;
+
     return RDK_IMU_OK;
 }
 
@@ -66,30 +60,15 @@ static rdk_imu_err_t rdk_imu_i2c_read(
 {
     if(len == 0)return RDK_IMU_ERR_PARAM;
 
-    struct i2c_msg msgs[2] = {
-        {
-            .addr = addr,
-            .flags = 0, // 先写寄存器地址
-            .len = 1, // 8 bit 地址
-            .buf = &reg,
-        },
-        {
-            .addr = addr,
-            .flags = I2C_M_RD, // 再读数据
-            .len = len,
-            .buf = data,
-        },
+    struct i2c_msg msgs[2] ={
+       {.addr = addr, .flags = 0, .len = 1, .buf = &reg,},
+       {.addr = addr, .flags = I2C_M_RD, .len = len, .buf = data,},
     };
 
-    struct i2c_rdwr_ioctl_data ioctl_data = {
-        .msgs  = msgs,
-        .nmsgs = 2,
-    };
+    struct i2c_rdwr_ioctl_data ioctl_data ={.msgs  = msgs, .nmsgs = 2,};
 
-    if(ioctl(fd, I2C_RDWR, &ioctl_data) < 0){
-        // perror("i2c_read failed");
-        return RDK_IMU_I2C_READ_ERR;
-    }
+    if(ioctl(fd, I2C_RDWR, &ioctl_data) < 0)return RDK_IMU_I2C_READ_ERR;
+
     return RDK_IMU_OK;
 }
 
@@ -112,6 +91,7 @@ static rdk_imu_err_t rdk_imu_i2c_update(
     ret = rdk_imu_i2c_write(fd, addr, reg, &new_val, 1);
     if(ret)return ret;
 
+    /* 写入验证 */
     uint8_t verify_val;
     ret = rdk_imu_i2c_read(fd, addr, reg, &verify_val, 1);
     if(ret)return ret;
@@ -121,7 +101,12 @@ static rdk_imu_err_t rdk_imu_i2c_update(
     return RDK_IMU_OK;
 }
 
-/* ============================== SPI 底层实现 ============================== */
+/* ============================== SPI Underlying function ============================== */
+/**
+ * @note 这里的几个 dummy 参数是因为 BMI088 的 Accel 在进行 SPI Read 时有特殊时序
+ *  在 TX 一个字节的寄存器之后，需要隔一个字节才能获取到寄存器内容
+ *  为了维护未来的类似情况，给 read，write 和 update 函数都加上dummy参数，单位是字节
+ */
 static rdk_imu_err_t rdk_imu_spi_write(
     int fd, 
     uint32_t speed_hz, 
@@ -139,7 +124,7 @@ static rdk_imu_err_t rdk_imu_spi_write(
     if(dummy_before > 0)memset(tx_buf + 1, 0, dummy_before);
     memcpy(tx_buf + 1 + dummy_before, data, len);
 
-    struct spi_ioc_transfer tr = {
+    struct spi_ioc_transfer tr ={
         .tx_buf = (unsigned long)tx_buf,
         .rx_buf = 0,
         .len = total,
@@ -149,10 +134,8 @@ static rdk_imu_err_t rdk_imu_spi_write(
         .cs_change = 0,
     };
 
-    if(ioctl(fd, SPI_IOC_MESSAGE(1), &tr) < 0) {
-        // perror("spi_write failed");
-        return RDK_IMU_SPI_WRITE_ERR;
-    }
+    if(ioctl(fd, SPI_IOC_MESSAGE(1), &tr) < 0)return RDK_IMU_SPI_WRITE_ERR;
+
     return RDK_IMU_OK;
 }
 
@@ -162,18 +145,18 @@ static rdk_imu_err_t rdk_imu_spi_read(
     uint8_t reg,
     uint8_t dummy_before,
     uint8_t *data, 
-    uint8_t len) // IMU 在 SPI 读 accel 时有特殊dummy，这里需要设置额外参数
+    uint8_t len)
 {
     if(len == 0)return RDK_IMU_ERR_PARAM;
 
-    uint16_t total = 1 + dummy_before + len;    // 总传输字节数
+    uint16_t total = 1 + dummy_before + len; // 总传输字节数
     uint8_t tx_buf[total];
     tx_buf[0] = reg | 0x80;
     memset(tx_buf + 1, 0, dummy_before + len); // 填充 dummy 和读时钟
 
     uint8_t rx_buf[total];
 
-    struct spi_ioc_transfer tr = {
+    struct spi_ioc_transfer tr ={
         .tx_buf = (unsigned long)tx_buf,
         .rx_buf = (unsigned long)rx_buf,
         .len = total,
@@ -183,10 +166,7 @@ static rdk_imu_err_t rdk_imu_spi_read(
         .cs_change = 0,
     };
 
-    if(ioctl(fd, SPI_IOC_MESSAGE(1), &tr) < 0){
-        // perror("spi_read failed");
-        return RDK_IMU_SPI_READ_ERR;
-    }
+    if(ioctl(fd, SPI_IOC_MESSAGE(1), &tr) < 0)return RDK_IMU_SPI_READ_ERR;
 
     // 跳过命令回显 + dummy 字节，取出有效数据
     memcpy(data, rx_buf + 1 + dummy_before, len);
@@ -202,7 +182,7 @@ static rdk_imu_err_t rdk_imu_spi_update(
     uint8_t data, 
     uint8_t mask)
 {
-    if (mask == 0) return RDK_IMU_OK;
+    if(mask == 0)return RDK_IMU_OK;
 
     uint8_t cur_val;
     rdk_imu_err_t ret;
@@ -214,7 +194,7 @@ static rdk_imu_err_t rdk_imu_spi_update(
     ret = rdk_imu_spi_write(fd, speed_hz, reg, wr_dummy_before, &new_val, 1);
     if(ret)return ret;
 
-    // 3. 验证：读回并与期望值比较
+    // 回读验证
     uint8_t verify_val;
     ret = rdk_imu_spi_read(fd, speed_hz, reg, rd_dummy_before, &verify_val, 1);
     if(ret)return ret;
@@ -224,78 +204,59 @@ static rdk_imu_err_t rdk_imu_spi_update(
     return RDK_IMU_OK;
 }
 
-/* ============================== Ops 适配层（将 bus 接口映射到底层实现） ============================== */
+/* ============================== I2C Ops abstraction layer ============================== */
 static rdk_imu_err_t rdk_imu_i2c_write_op(
-    rdk_imu_bus_t *bus, 
-    uint8_t reg,
-    uint8_t *data, 
-    uint8_t len)
+    rdk_imu_bus_t *bus, uint8_t reg, uint8_t *data, uint8_t len)
 {
     return rdk_imu_i2c_write(bus->fd, bus->addr, reg, data, len);
 }
 
 static rdk_imu_err_t rdk_imu_i2c_read_op(
-    rdk_imu_bus_t *bus, 
-    uint8_t reg,
-    uint8_t *data, 
-    uint8_t len)
+    rdk_imu_bus_t *bus, uint8_t reg, uint8_t *data, uint8_t len)
 {
     return rdk_imu_i2c_read(bus->fd, bus->addr, reg, data, len);
 }
 
 static rdk_imu_err_t rdk_imu_i2c_update_op(
-    rdk_imu_bus_t *bus, 
-    uint8_t reg,
-    uint8_t data, 
-    uint8_t mask)
+    rdk_imu_bus_t *bus, uint8_t reg, uint8_t data,uint8_t mask)
 {
     return rdk_imu_i2c_update(bus->fd, bus->addr, reg, data, mask);
 }
 
-static rdk_imu_bus_ops_t i2c_ops = {
+static rdk_imu_bus_ops_t i2c_ops ={
     .write  = rdk_imu_i2c_write_op,
     .read   = rdk_imu_i2c_read_op,
     .update = rdk_imu_i2c_update_op,
 };
 
+/* ============================== SPI Ops abstraction layer ============================== */
 static rdk_imu_err_t rdk_imu_spi_read_op(
-    rdk_imu_bus_t *bus, 
-    uint8_t reg,
-    uint8_t *data, 
-    uint8_t len)
+    rdk_imu_bus_t *bus, uint8_t reg, uint8_t *data, uint8_t len)
 {
     return rdk_imu_spi_read(bus->fd, bus->speed_hz, reg, bus->rd_dummy, data, len);
 }
 
 static rdk_imu_err_t rdk_imu_spi_write_op(
-    rdk_imu_bus_t *bus, 
-    uint8_t reg,
-    uint8_t *data, 
-    uint8_t len)
+    rdk_imu_bus_t *bus, uint8_t reg, uint8_t *data, uint8_t len)
 {
     return rdk_imu_spi_write(bus->fd, bus->speed_hz, reg, bus->wr_dummy, data, len);
 }
 
 static rdk_imu_err_t rdk_imu_spi_update_op(
-    rdk_imu_bus_t *bus, 
-    uint8_t reg,
-    uint8_t data, 
-    uint8_t mask) 
+    rdk_imu_bus_t *bus, uint8_t reg, uint8_t data, uint8_t mask) 
 {
     return rdk_imu_spi_update(bus->fd, bus->speed_hz, reg, bus->rd_dummy, bus->wr_dummy, data, mask);
 }
 
-static rdk_imu_bus_ops_t spi_ops = {
+static rdk_imu_bus_ops_t spi_ops ={
     .read   = rdk_imu_spi_read_op,
     .write  = rdk_imu_spi_write_op,
     .update = rdk_imu_spi_update_op,
 };
 
-/* ============================== 总线工具函数 ============================== */
+/* ============================== Bus utility functions ============================== */
 /**
  * @brief 列出 /dev 下所有可用的 I2C 总线号
- * @param bus_numbers  输出数组（调用方保证至少 256 字节）
- * @param count        输出参数，实际填充的个数（最多 256）
  */
 rdk_imu_err_t list_i2c_bus(
     uint8_t *bus_numbers, 
@@ -308,7 +269,7 @@ rdk_imu_err_t list_i2c_bus(
     if(!dir)return RDK_IMU_OPEN_DIR_ERR;
 
     struct dirent *entry;
-    while((entry = readdir(dir)) != NULL) {
+    while((entry = readdir(dir)) != NULL){
         if(strncmp(entry->d_name, "i2c-", 4) != 0)continue;
 
         int bus = atoi(entry->d_name + 4);
@@ -321,11 +282,11 @@ rdk_imu_err_t list_i2c_bus(
         while(pos < *count && bus_numbers[pos] < num)pos++;
         if(pos < *count && bus_numbers[pos] == num)continue;  // 重复，跳过
 
-        if(*count < 256){
+        // if(*count < 256){
             for(int i = *count; i > pos; i--)bus_numbers[i] = bus_numbers[i - 1];
             bus_numbers[pos] = num;
             (*count)++;
-        }
+        // }
     }
     closedir(dir);
     return RDK_IMU_OK;
@@ -333,8 +294,6 @@ rdk_imu_err_t list_i2c_bus(
 
 /**
  * @brief 列出 /dev 下所有可用的 SPI 总线号（spidevX.Y 中的 X）
- * @param devices  输出数组（调用方保证至少 256 字节）
- * @param count    输出参数，实际填充的个数
  */
 rdk_imu_err_t list_spi_bus(
     uint8_t *devices, 
@@ -361,9 +320,10 @@ rdk_imu_err_t list_spi_bus(
         // 检查是否已存在
         uint8_t i;
         for(i = 0; i < *count; i++){
-            if (devices[i] == new_bus) break;
+            if(devices[i] == new_bus) break;
         }
-        if(i == *count && *count < 256){   // 未找到且未满
+        // if(i == *count && *count < 256){   // 未找到且未满
+        if(i == *count){
             devices[*count] = new_bus;
             (*count)++;
         }
@@ -404,23 +364,18 @@ rdk_imu_err_t list_spi_bus_cs(
         if(endptr == cs_str || *endptr != '\0' || cs < 0 || cs > 255)
             continue;
 
-        if (*count < 256) {
+        // if(*count < 256){
             cs_array[*count] = (uint8_t)cs;
             (*count)++;
-        }
+        // }
     }
     closedir(dir);
 
     return RDK_IMU_OK;
 }
 
-/* ============================== 总线初始化实现 ============================== */
 /**
  * @brief 通过 I2C 读取并验证单个设备的芯片 ID
- * @param fd 已打开的 I2C 总线文件描述符
- * @param addr 设备地址
- * @param chip_reg 芯片 ID 寄存器地址
- * @param expected 期望的芯片 ID 值
  */
 static rdk_imu_err_t i2c_check_chip_id(
     int fd, 
@@ -433,18 +388,13 @@ static rdk_imu_err_t i2c_check_chip_id(
     rdk_imu_err_t ret = rdk_imu_i2c_read(fd, addr, chip_reg, &id, 1);
 
     if(ret)return ret;
-    if(id != expected)return RDK_IMU_CHIP_ID_ERR;   // 需定义该错误码
+    if(id != expected)return RDK_IMU_CHIP_ID_ERR;
 
     return RDK_IMU_OK;
 }
 
 /**
  * @brief 通过 SPI 读取并验证单个设备的芯片 ID
- * @param fd 已打开的 SPI 设备文件描述符
- * @param speed_hz SPI 时钟速率
- * @param reg 芯片 ID 寄存器地址（不含读写标志）
- * @param dummy SPI 读额外 dummy 字节数
- * @param expected 期望的芯片 ID 值
  */
 static rdk_imu_err_t spi_check_chip_id(
     int fd, 
@@ -457,14 +407,15 @@ static rdk_imu_err_t spi_check_chip_id(
 
     rdk_imu_err_t ret = rdk_imu_spi_read(fd, speed_hz, reg, dummy, &id, 1);
 
-    RDK_DEBUG_PRINTF("ID Reg %02X, expected %02X, actual %02X\n", reg, expected, id);
-
     if(ret != RDK_IMU_OK)return ret;
     if(id != expected)return RDK_IMU_CHIP_ID_ERR;
 
     return RDK_IMU_OK;
 }
 
+/**
+ * @brief 多次尝试通过 SPI 读取并验证单个设备的芯片 ID
+ */
 static rdk_imu_err_t spi_check_chip_id_multi(
     int fd, 
     uint32_t speed_hz, 
@@ -473,11 +424,10 @@ static rdk_imu_err_t spi_check_chip_id_multi(
     uint8_t expected,
     uint32_t time)
 {
-    uint8_t id;
 
     rdk_imu_err_t ret;
 
-    for(int i=0; i<time; i++){
+    for(uint32_t i=0; i<time; i++){
         ret = spi_check_chip_id(fd, speed_hz, reg, dummy, expected);
         RDK_DEBUG_PRINTF("Read chip ID by SPI, time %d, speed %d Hz\n", i, speed_hz);
 
@@ -489,8 +439,6 @@ static rdk_imu_err_t spi_check_chip_id_multi(
 
 /**
  * @brief 自动扫描 I2C/SPI 总线，寻找 IMU 加速度计和陀螺仪
- * @param bus_info 总线信息指针，扫描结果写入此处
- * @return RDK_IMU_OK 找到完整设备，否则返回错误码
  */
 static rdk_imu_err_t rdk_imu_bus_auto_scan(
     rdk_imu_bus_info_t *bus_info)
@@ -503,7 +451,6 @@ static rdk_imu_err_t rdk_imu_bus_auto_scan(
     uint8_t spi_bus_num;
     uint8_t spi_bus_cs_num;
 
-    uint8_t reg_value[2];
     int fd = -1;
     char dev_path[32];
     uint8_t accel_found = 0, gyro_found = 0;
@@ -520,7 +467,7 @@ static rdk_imu_err_t rdk_imu_bus_auto_scan(
     }
 
     /* 遍历 I2C 总线 */
-    for(uint16_t i2c_bus = 0; i2c_bus < /*i2c_bus_num*/5; i2c_bus++){
+    for(uint16_t i2c_bus = 0; i2c_bus < i2c_bus_num; i2c_bus++){
     /* 反向扫描，避免大总线号的虚拟总线造成超长延时 */
     // for(uint16_t i2c_bus = i2c_bus_num-1; i2c_bus < i2c_bus_num; i2c_bus--){
         snprintf(dev_path, sizeof(dev_path), "/dev/i2c-%u", i2c_bus_list[i2c_bus]);
@@ -652,18 +599,20 @@ static rdk_imu_err_t rdk_imu_bus_auto_scan(
     return RDK_IMU_OK;
 }
 
+/* ============================== API Implementation ============================== */
 rdk_imu_err_t rdk_imu_bus_init(
     rdk_imu_state_t* st,
     rdk_imu_bus_info_t bus_info)
 {
+    if(!st)return RDK_IMU_CAN_NOT_RELEASE;
+
     rdk_imu_err_t ret = RDK_IMU_OK;
     
     char dev_path[32];
-
     int fd_accel, fd_gyro;
 
     /* 自动扫描 */
-    if(bus_info.interface == RDK_IMU_AUTO) {
+    if(bus_info.interface == RDK_IMU_AUTO){
         ret = rdk_imu_bus_auto_scan(&bus_info);
         if(ret)return ret;
 
@@ -722,7 +671,7 @@ rdk_imu_err_t rdk_imu_bus_init(
                 | spi_check_chip_id_multi(fd_gyro, 
                     bus_info.bus.spi.gyro.speed_hz, 
                     IMU_GYRO_REG_CHIP_ID, 
-                    IMU_SPI_ACCEL_RD_DUMMY, 
+                    IMU_SPI_GYRO_RD_DUMMY, 
                     IMU_GYRO_CHIP_ID,
                     10);
 
@@ -784,7 +733,7 @@ rdk_imu_err_t rdk_imu_bus_deinit(
     if(!st)return RDK_IMU_CAN_NOT_RELEASE;
 
     // 关闭并清理加速度计总线
-    if (st->accel_bus.fd >= 0) {
+    if(st->accel_bus.fd >= 0){
         close(st->accel_bus.fd);
         st->accel_bus.fd = -1;
     }
@@ -792,7 +741,7 @@ rdk_imu_err_t rdk_imu_bus_deinit(
     st->accel_bus.fd = -1; // 确保无效值
 
     // 关闭并清理陀螺仪总线
-    if (st->gyro_bus.fd >= 0) {
+    if(st->gyro_bus.fd >= 0){
         close(st->gyro_bus.fd);
         st->gyro_bus.fd = -1;
     }

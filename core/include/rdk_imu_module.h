@@ -8,11 +8,13 @@
 #include <stdint.h>
 #include <pthread.h>
 
+/* ---------- error code ---------- */
 typedef enum {
     RDK_IMU_OK = 0,
     RDK_IMU_ERR_PARAM,
 } rdk_imu_err_t;
 
+/* ---------- about bus(i2c/spi) ---------- */
 typedef enum rdk_imu_interface_e{
     RDK_IMU_AUTO,
     RDK_IMU_I2C,
@@ -45,6 +47,7 @@ typedef struct rdk_imu_bus_s{
     int32_t valid;
 }rdk_imu_bus_t;
 
+/* ---------- about interrupt ---------- */
 typedef enum rdk_imu_accel_drdy_int_e{
     RDK_IMU_INT1,
     RDK_IMU_INT2,
@@ -55,6 +58,7 @@ typedef enum rdk_imu_gyro_drdy_int_e{
     RDK_IMU_INT4,
 }rdk_imu_gyro_drdy_int_t;
 
+/* ---------- IMU sensor parameters ---------- */
 typedef enum rdk_imu_accel_bwp_e{
     RDK_IMU_OSR4,
     RDK_IMU_OSR2,
@@ -99,6 +103,7 @@ typedef enum rdk_imu_gyro_bandwidth_e{
 }rdk_imu_gyro_bandwidth_t;
 
 typedef struct rdk_imu_config_s{
+    /* accel 和 gyro 的 chip 端和 SoC 端中断脚选择 */
     rdk_imu_accel_drdy_int_t accel_drdy_int;
     uint32_t accel_drdy_gpiochip;
     uint32_t accel_drdy_gpiochip_offset;
@@ -107,6 +112,7 @@ typedef struct rdk_imu_config_s{
     uint32_t gyro_drdy_gpiochip;
     uint32_t gyro_drdy_gpiochip_offset;
 
+    /* accel 和 gyro 性能设置 */
     rdk_imu_accel_bwp_t accel_bwp;
     rdk_imu_accel_odr_t accel_odr;
     rdk_imu_accel_range_t accel_range;
@@ -114,11 +120,14 @@ typedef struct rdk_imu_config_s{
     rdk_imu_gyro_range_t gyro_range;
     rdk_imu_gyro_bandwidth_t gyro_bandwidth;
 
+    /* 缓冲区长度，必须是 2 的倍数 */
     uint32_t fifo_length;
 
+    /* 设置是否生效 */
     int32_t valid;
 }rdk_imu_config_t;
 
+/* ---------- data package ---------- */
 typedef struct rdk_imu_3_axis_data_s{
     float x, y, z;
     uint64_t timestamp_ns;
@@ -129,72 +138,53 @@ typedef struct rdk_imu_6_axis_data_s{
     rdk_imu_3_axis_data_t accel, gyro;
 }rdk_imu_6_axis_data_t;
 
-typedef struct rdk_imu_fifo_s{
-    rdk_imu_6_axis_data_t *buffer;  
-    unsigned int size; 
-    unsigned int mask; 
-    unsigned int head; 
-    unsigned int tail; 
-}rdk_imu_fifo_t;
-
-typedef struct rdk_imu_state_s{
-    rdk_imu_bus_t bus;
-    rdk_imu_config_t config;
-
-    uint32_t enable;
-    pthread_mutex_t mutex;
-    rdk_imu_fifo_t imu_fifo;
-}rdk_imu_state_t;
-
-rdk_imu_state_t rdk_imu_get_default_state();
-
-rdk_imu_err_t rdk_imu_bus_init(
-    rdk_imu_state_t* st,
-    rdk_imu_bus_t *bus
-);
-
-rdk_imu_err_t rdk_imu_device_init(
-    rdk_imu_state_t* st,
-    rdk_imu_config_t *config
-);
-
-rdk_imu_err_t rdk_imu_enable(
-    rdk_imu_state_t* st
-);
-
-rdk_imu_err_t rdk_imu_disable(
-    rdk_imu_state_t* st
-);
-
-rdk_imu_err_t rdk_imu_device_deinit(
-    rdk_imu_state_t* st
-);
-
-rdk_imu_err_t rdk_imu_bus_deinit(
-    rdk_imu_state_t* st
-);
-
-rdk_imu_err_t rdk_imu_fifo_available(
-    rdk_imu_state_t *st,
-    uin32_t count
-);
-
-rdk_imu_err_t rdk_imu_read_indep(
-    rdk_imu_state_t *st, 
-    rdk_imu_6_axis_data_t *data,
-    uin32_t count
-);
+typedef struct rdk_imu_state_s rdk_imu_state_t;
 
 typedef enum rdk_imu_device_e{
     RDK_IMU_ACCEL,
     RDK_IMU_GYRO,
 }rdk_imu_device_t;
 
+/* ---------- API ---------- */
+rdk_imu_state_t *rdk_imu_create_default(
+    void);
+
+rdk_imu_err_t rdk_imu_bus_init(
+    rdk_imu_state_t* st,
+    rdk_imu_bus_t *bus);
+
+rdk_imu_err_t rdk_imu_device_init(
+    rdk_imu_state_t* st,
+    rdk_imu_config_t *config);
+
+rdk_imu_err_t rdk_imu_enable(
+    rdk_imu_state_t* st);
+
+rdk_imu_err_t rdk_imu_disable(
+    rdk_imu_state_t* st);
+
+rdk_imu_err_t rdk_imu_device_deinit(
+    rdk_imu_state_t* st);
+
+rdk_imu_err_t rdk_imu_bus_deinit(
+    rdk_imu_state_t* st);
+
+rdk_imu_err_t rdk_imu_destroy(
+    rdk_imu_state_t *st);
+
+rdk_imu_err_t rdk_imu_fifo_available(
+    rdk_imu_state_t *st,
+    uint32_t count);
+
+rdk_imu_err_t rdk_imu_read_indep(
+    rdk_imu_state_t *st, 
+    rdk_imu_6_axis_data_t *data,
+    uint32_t count);
+
 rdk_imu_err_t rdk_imu_read_fused(
     rdk_imu_state_t *st, 
     rdk_imu_6_axis_data_t *data,
     rdk_imu_device_t fuse_by,
-    uint64_t max_age_ns
-);
+    uint64_t max_age_ns);
 
 #endif

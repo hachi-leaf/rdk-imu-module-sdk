@@ -17,12 +17,19 @@
 
 #include "rdk_imu_module.h"
 
+#ifdef RDK_IMU_DEBUG
+#define RDK_DEBUG_PRINTF(fmt, ...) \
+    printf("[%s:%d] %s(): " fmt, __FILE__, __LINE__, __func__, ##__VA_ARGS__)
+#else
+#define RDK_DEBUG_PRINTF(fmt, ...) ((void)0)
+#endif
+
 /* ============================== I2C 底层实现 ============================== */
 static rdk_imu_err_t rdk_imu_i2c_write(
     int fd, 
     uint8_t addr, 
     uint8_t reg, 
-    const uint8_t *data, 
+    uint8_t *data, 
     uint8_t len) 
 {
     if(len == 0)return RDK_IMU_ERR_PARAM;
@@ -96,12 +103,22 @@ static rdk_imu_err_t rdk_imu_i2c_update(
     if(mask == 0)return RDK_IMU_OK;
 
     uint8_t cur_val;
+    rdk_imu_err_t ret;
 
-    rdk_imu_err_t ret = rdk_imu_i2c_read(fd, addr, reg, &cur_val, 1);
+    ret = rdk_imu_i2c_read(fd, addr, reg, &cur_val, 1);
     if(ret)return ret;
 
     uint8_t new_val = (cur_val & ~mask) | (data & mask);
-    return rdk_imu_i2c_write(fd, addr, reg, &new_val, 1);
+    ret = rdk_imu_i2c_write(fd, addr, reg, &new_val, 1);
+    if(ret)return ret;
+
+    uint8_t verify_val;
+    ret = rdk_imu_i2c_read(fd, addr, reg, &verify_val, 1);
+    if(ret)return ret;
+
+    if(verify_val != new_val)return RDK_IMU_I2C_UPDATE_FAILED;
+
+    return RDK_IMU_OK;
 }
 
 /* ============================== SPI 底层实现 ============================== */
@@ -110,7 +127,7 @@ static rdk_imu_err_t rdk_imu_spi_write(
     uint32_t speed_hz, 
     uint8_t reg,
     uint8_t dummy_before,
-    const uint8_t *data, 
+    uint8_t *data, 
     uint8_t len)
 {
     if(len == 0)return RDK_IMU_ERR_PARAM;
@@ -145,9 +162,9 @@ static rdk_imu_err_t rdk_imu_spi_read(
     uint8_t reg,
     uint8_t dummy_before,
     uint8_t *data, 
-    uint8_t len) // BMI088 在 SPI 读 accel 时有特殊dummy，这里需要设置额外参数
+    uint8_t len) // IMU 在 SPI 读 accel 时有特殊dummy，这里需要设置额外参数
 {
-    if (len == 0) return RDK_IMU_ERR_PARAM;
+    if(len == 0)return RDK_IMU_ERR_PARAM;
 
     uint16_t total = 1 + dummy_before + len;    // 总传输字节数
     uint8_t tx_buf[total];
@@ -166,7 +183,7 @@ static rdk_imu_err_t rdk_imu_spi_read(
         .cs_change = 0,
     };
 
-    if(ioctl(fd, SPI_IOC_MESSAGE(1), &tr) < 0) {
+    if(ioctl(fd, SPI_IOC_MESSAGE(1), &tr) < 0){
         // perror("spi_read failed");
         return RDK_IMU_SPI_READ_ERR;
     }
@@ -188,19 +205,30 @@ static rdk_imu_err_t rdk_imu_spi_update(
     if (mask == 0) return RDK_IMU_OK;
 
     uint8_t cur_val;
+    rdk_imu_err_t ret;
 
-    rdk_imu_err_t ret = rdk_imu_spi_read(fd, speed_hz, reg, rd_dummy_before, &cur_val, 1);
+    ret = rdk_imu_spi_read(fd, speed_hz, reg, rd_dummy_before, &cur_val, 1);
     if(ret)return ret;
 
     uint8_t new_val = (cur_val & ~mask) | (data & mask);
-    return rdk_imu_spi_write(fd, speed_hz, reg, wr_dummy_before, &new_val, 1);
+    ret = rdk_imu_spi_write(fd, speed_hz, reg, wr_dummy_before, &new_val, 1);
+    if(ret)return ret;
+
+    // 3. 验证：读回并与期望值比较
+    uint8_t verify_val;
+    ret = rdk_imu_spi_read(fd, speed_hz, reg, rd_dummy_before, &verify_val, 1);
+    if(ret)return ret;
+
+    if(verify_val != new_val)return RDK_IMU_SPI_UPDATE_FAILED;
+
+    return RDK_IMU_OK;
 }
 
 /* ============================== Ops 适配层（将 bus 接口映射到底层实现） ============================== */
 static rdk_imu_err_t rdk_imu_i2c_write_op(
     rdk_imu_bus_t *bus, 
     uint8_t reg,
-    const uint8_t *data, 
+    uint8_t *data, 
     uint8_t len)
 {
     return rdk_imu_i2c_write(bus->fd, bus->addr, reg, data, len);
@@ -224,7 +252,7 @@ static rdk_imu_err_t rdk_imu_i2c_update_op(
     return rdk_imu_i2c_update(bus->fd, bus->addr, reg, data, mask);
 }
 
-static const rdk_imu_bus_ops_t i2c_ops = {
+static rdk_imu_bus_ops_t i2c_ops = {
     .write  = rdk_imu_i2c_write_op,
     .read   = rdk_imu_i2c_read_op,
     .update = rdk_imu_i2c_update_op,
@@ -242,7 +270,7 @@ static rdk_imu_err_t rdk_imu_spi_read_op(
 static rdk_imu_err_t rdk_imu_spi_write_op(
     rdk_imu_bus_t *bus, 
     uint8_t reg,
-    const uint8_t *data, 
+    uint8_t *data, 
     uint8_t len)
 {
     return rdk_imu_spi_write(bus->fd, bus->speed_hz, reg, bus->wr_dummy, data, len);
@@ -257,7 +285,7 @@ static rdk_imu_err_t rdk_imu_spi_update_op(
     return rdk_imu_spi_update(bus->fd, bus->speed_hz, reg, bus->rd_dummy, bus->wr_dummy, data, mask);
 }
 
-static const rdk_imu_bus_ops_t spi_ops = {
+static rdk_imu_bus_ops_t spi_ops = {
     .read   = rdk_imu_spi_read_op,
     .write  = rdk_imu_spi_write_op,
     .update = rdk_imu_spi_update_op,
@@ -323,7 +351,7 @@ rdk_imu_err_t list_spi_bus(
     while((entry = readdir(dir)) != NULL){
         if(strncmp(entry->d_name, "spidev", 6) != 0)continue;
 
-        const char *p = entry->d_name + 6;
+        char *p = entry->d_name + 6;
         char *endptr;
         long bus = strtol(p, &endptr, 10);
         if(endptr == p || *endptr != '.' || bus < 0 || bus > 255)continue;
@@ -370,7 +398,7 @@ rdk_imu_err_t list_spi_bus_cs(
     while((entry = readdir(dir)) != NULL){
         if(strncmp(entry->d_name, prefix, len) != 0)continue;
 
-        const char *cs_str = entry->d_name + len;
+        char *cs_str = entry->d_name + len;
         char *endptr;
         long cs = strtol(cs_str, &endptr, 10);
         if(endptr == cs_str || *endptr != '\0' || cs < 0 || cs > 255)
@@ -429,7 +457,7 @@ static rdk_imu_err_t spi_check_chip_id(
 
     rdk_imu_err_t ret = rdk_imu_spi_read(fd, speed_hz, reg, dummy, &id, 1);
 
-    // printf("spi check: reg %2X, id %02X\n", reg, id);
+    RDK_DEBUG_PRINTF("ID Reg %02X, expected %02X, actual %02X\n", reg, expected, id);
 
     if(ret != RDK_IMU_OK)return ret;
     if(id != expected)return RDK_IMU_CHIP_ID_ERR;
@@ -437,8 +465,30 @@ static rdk_imu_err_t spi_check_chip_id(
     return RDK_IMU_OK;
 }
 
+static rdk_imu_err_t spi_check_chip_id_multi(
+    int fd, 
+    uint32_t speed_hz, 
+    uint8_t reg, 
+    uint8_t dummy, 
+    uint8_t expected,
+    uint32_t time)
+{
+    uint8_t id;
+
+    rdk_imu_err_t ret;
+
+    for(int i=0; i<time; i++){
+        ret = spi_check_chip_id(fd, speed_hz, reg, dummy, expected);
+        RDK_DEBUG_PRINTF("Read chip ID by SPI, time %d, speed %d Hz\n", i, speed_hz);
+
+        if(ret == RDK_IMU_OK)break;
+    }
+
+    return ret;
+}
+
 /**
- * @brief 自动扫描 I2C/SPI 总线，寻找 BMI088 加速度计和陀螺仪
+ * @brief 自动扫描 I2C/SPI 总线，寻找 IMU 加速度计和陀螺仪
  * @param bus_info 总线信息指针，扫描结果写入此处
  * @return RDK_IMU_OK 找到完整设备，否则返回错误码
  */
@@ -459,18 +509,14 @@ static rdk_imu_err_t rdk_imu_bus_auto_scan(
     uint8_t accel_found = 0, gyro_found = 0;
     rdk_imu_err_t ret;
 
-#ifdef RDK_IMU_DEBUG
-    printf("Starting I2C search...\n");
-#endif
+    RDK_DEBUG_PRINTF("Starting I2C search...\n");
 
     /* 查看可用的 I2C 总线 */
     ret = list_i2c_bus(&i2c_bus_list[0], &i2c_bus_num);
     if(ret)return ret;
 
     if(i2c_bus_num == 0){
-#ifdef RDK_IMU_DEBUG
-        printf("No available i2c bus\n");
-#endif
+    RDK_DEBUG_PRINTF("No available i2c bus\n");
     }
 
     /* 遍历 I2C 总线 */
@@ -480,40 +526,32 @@ static rdk_imu_err_t rdk_imu_bus_auto_scan(
         snprintf(dev_path, sizeof(dev_path), "/dev/i2c-%u", i2c_bus_list[i2c_bus]);
         fd = open(dev_path, O_RDWR);
         if(fd < 0){
-#ifdef RDK_IMU_DEBUG
-            printf("Failed to open %s, skip.\n", dev_path);
-#endif
+        RDK_DEBUG_PRINTF("Failed to open %s, skip.\n", dev_path);
             continue;
         }
-#ifdef RDK_IMU_DEBUG
         else{
-            printf("Open %s.\n", dev_path);
+            RDK_DEBUG_PRINTF("Open %s.\n", dev_path);
         }
-#endif
 
         for(uint8_t addr = 0x08; addr < 0x77; addr++){
             if(!accel_found){
-                ret = i2c_check_chip_id(fd, addr, BMI088_ACCEL_CHIP_REG, BMI088_ACCEL_CHIP_ID);
+                ret = i2c_check_chip_id(fd, addr, IMU_ACCEL_REG_CHIP_ID, IMU_ACCEL_CHIP_ID);
                 if(ret == RDK_IMU_OK){
                     bus_info->interface = RDK_IMU_I2C;
                     bus_info->bus.i2c.accel.bus = i2c_bus_list[i2c_bus];
                     bus_info->bus.i2c.accel.addr = addr;
                     accel_found = 1;
-#ifdef RDK_IMU_DEBUG
-                    printf("Found accel on I2C bus %u addr 0x%02X\n", i2c_bus_list[i2c_bus], addr);
-#endif
+                    RDK_DEBUG_PRINTF("Found accel on I2C bus %u addr 0x%02X\n", i2c_bus_list[i2c_bus], addr);
                 }
             }
             if(!gyro_found){
-                ret = i2c_check_chip_id(fd, addr, BMI088_GYRO_CHIP_REG, BMI088_GYRO_CHIP_ID);
+                ret = i2c_check_chip_id(fd, addr, IMU_GYRO_REG_CHIP_ID, IMU_GYRO_CHIP_ID);
                 if(ret == RDK_IMU_OK){
                     bus_info->interface = RDK_IMU_I2C;
                     bus_info->bus.i2c.gyro.bus = i2c_bus_list[i2c_bus];
                     bus_info->bus.i2c.gyro.addr = addr;
                     gyro_found = 1;
-#ifdef RDK_IMU_DEBUG
-                    printf("Found gyro on I2C bus %u addr 0x%02X\n", i2c_bus_list[i2c_bus], addr);
-#endif
+                    RDK_DEBUG_PRINTF("Found gyro on I2C bus %u addr 0x%02X\n", i2c_bus_list[i2c_bus], addr);
                 }
             }
             if(accel_found && gyro_found)break;
@@ -531,16 +569,12 @@ static rdk_imu_err_t rdk_imu_bus_auto_scan(
 
     /* 如果 I2C 没找全，尝试 SPI */
     if(!accel_found || !gyro_found){
-#ifdef RDK_IMU_DEBUG
-        printf("Full I2C device not found, starting SPI search...\n");
-#endif
+        RDK_DEBUG_PRINTF("Full I2C device not found, starting SPI search...\n");
         ret = list_spi_bus(&spi_bus_list[0], &spi_bus_num);
         if(ret)return ret;
 
         if(spi_bus_num == 0){
-#ifdef RDK_IMU_DEBUG
-            printf("No available spi bus\n");
-#endif
+            RDK_DEBUG_PRINTF("No available spi bus\n");
         }
 
         for(uint16_t spi_bus = 0; spi_bus < spi_bus_num; spi_bus++){
@@ -552,52 +586,46 @@ static rdk_imu_err_t rdk_imu_bus_auto_scan(
                 fd = open(dev_path, O_RDWR);
 
                 if(fd < 0){
-#ifdef RDK_IMU_DEBUG
-                    printf("Failed to open %s, skip.\n", dev_path);
-#endif
+                    RDK_DEBUG_PRINTF("Failed to open %s, skip.\n", dev_path);
                     continue;
                 }
-#ifdef RDK_IMU_DEBUG
                 else{
-                    printf("Open %s.\n", dev_path);
+                    RDK_DEBUG_PRINTF("Open %s.\n", dev_path);
                 }
-#endif
-                uint8_t mode = RDK_IMU_SPID_MODE;
+                uint8_t mode = RDK_IMU_SPI_MODE;
                 ioctl(fd, SPI_IOC_WR_MODE, &mode);
 
                 if(!accel_found){
-                    ret = spi_check_chip_id(fd, 
+                    ret = spi_check_chip_id_multi(fd, 
                         RDK_IMU_SPI_SCAN_SPEED_HZ, 
-                        BMI088_ACCEL_CHIP_REG, 
-                        BMI088_SPI_ACCEL_RD_DUMMY, 
-                        BMI088_ACCEL_CHIP_ID);
+                        IMU_ACCEL_REG_CHIP_ID, 
+                        IMU_SPI_ACCEL_RD_DUMMY, 
+                        IMU_ACCEL_CHIP_ID,
+                        10);
                         
                     if(ret == RDK_IMU_OK){
                         bus_info->interface = RDK_IMU_SPI;
                         bus_info->bus.spi.accel.bus = spi_bus_list[spi_bus];
                         bus_info->bus.spi.accel.cs  = spi_bus_cs_list[spi_bus_cs];
                         accel_found = 1;
-#ifdef RDK_IMU_DEBUG
-                        printf("Found accel on %s\n", dev_path);
-#endif
+                        RDK_DEBUG_PRINTF("Found accel on %s\n", dev_path);
                     }
                 }
 
                 if(!gyro_found){
-                    ret = spi_check_chip_id(fd, 
+                    ret = spi_check_chip_id_multi(fd, 
                         RDK_IMU_SPI_SCAN_SPEED_HZ, 
-                        BMI088_GYRO_CHIP_REG, 
-                        BMI088_SPI_GYRO_RD_DUMMY, 
-                        BMI088_GYRO_CHIP_ID);
+                        IMU_GYRO_REG_CHIP_ID, 
+                        IMU_SPI_GYRO_RD_DUMMY, 
+                        IMU_GYRO_CHIP_ID,
+                        10);
 
                     if(ret == RDK_IMU_OK){
                         bus_info->interface = RDK_IMU_SPI;
                         bus_info->bus.spi.gyro.bus = spi_bus_list[spi_bus];
                         bus_info->bus.spi.gyro.cs  = spi_bus_cs_list[spi_bus_cs];
                         gyro_found = 1;
-#ifdef RDK_IMU_DEBUG
-                        printf("Found gyro on %s\n", dev_path);
-#endif
+                        RDK_DEBUG_PRINTF("Found gyro on %s\n", dev_path);
                     }
                 }
 
@@ -617,9 +645,7 @@ static rdk_imu_err_t rdk_imu_bus_auto_scan(
 
     /* 检查最终是否找到完整设备 */
     if(!accel_found || !gyro_found){
-#ifdef RDK_IMU_DEBUG
-        printf("Full device not found on any bus.\n");
-#endif
+        RDK_DEBUG_PRINTF("Full device not found on any bus.\n");
         return RDK_IMU_NO_DEV_ERR;
     }
 
@@ -642,28 +668,26 @@ rdk_imu_err_t rdk_imu_bus_init(
         if(ret)return ret;
 
         // 打印找到的设备信息
-#ifdef RDK_IMU_DEBUG
         if(bus_info.interface == RDK_IMU_I2C){
-            printf("IMU found on I2C:\n");
-            printf("  Accel: bus=%u addr=0x%02X\n",
+            RDK_DEBUG_PRINTF("IMU found on I2C:\n");
+            RDK_DEBUG_PRINTF("  Accel: bus=%u addr=0x%02X\n",
                    bus_info.bus.i2c.accel.bus,
                    bus_info.bus.i2c.accel.addr);
-            printf("  Gyro:  bus=%u addr=0x%02X\n",
+            RDK_DEBUG_PRINTF("  Gyro:  bus=%u addr=0x%02X\n",
                    bus_info.bus.i2c.gyro.bus,
                    bus_info.bus.i2c.gyro.addr);
         }
         else if(bus_info.interface == RDK_IMU_SPI){
-            printf("IMU found on SPI:\n");
-            printf("  Accel: bus=%u CS=%u\n",
+            RDK_DEBUG_PRINTF("IMU found on SPI:\n");
+            RDK_DEBUG_PRINTF("  Accel: bus=%u CS=%u\n",
                    bus_info.bus.spi.accel.bus,
                    bus_info.bus.spi.accel.cs);
-            printf("  Gyro:  bus=%u CS=%u\n",
+            RDK_DEBUG_PRINTF("  Gyro:  bus=%u CS=%u\n",
                    bus_info.bus.spi.gyro.bus,
                    bus_info.bus.spi.gyro.cs);
         }
-#endif
     }
-    /* 不使用自动扫描，检查用户提供的接口内容是否为BMI088芯片 */
+    /* 不使用自动扫描，检查用户提供的接口内容是否为IMU芯片 */
     else{
         if(bus_info.interface == RDK_IMU_I2C){
             snprintf(dev_path, sizeof(dev_path), "/dev/i2c-%u", bus_info.bus.i2c.accel.bus);
@@ -674,8 +698,8 @@ rdk_imu_err_t rdk_imu_bus_init(
             fd_gyro = open(dev_path, O_RDWR);
             if(fd_gyro<0)return RDK_IMU_OPEN_FILE_ERR;
 
-            ret = i2c_check_chip_id(fd_accel, bus_info.bus.i2c.accel.addr, BMI088_ACCEL_CHIP_REG, BMI088_ACCEL_CHIP_ID)
-                | i2c_check_chip_id(fd_gyro, bus_info.bus.i2c.gyro.addr, BMI088_GYRO_CHIP_REG, BMI088_GYRO_CHIP_ID);
+            ret = i2c_check_chip_id(fd_accel, bus_info.bus.i2c.accel.addr, IMU_ACCEL_REG_CHIP_ID, IMU_ACCEL_CHIP_ID)
+                | i2c_check_chip_id(fd_gyro, bus_info.bus.i2c.gyro.addr, IMU_GYRO_REG_CHIP_ID, IMU_GYRO_CHIP_ID);
 
             close(fd_accel);
             close(fd_gyro);
@@ -689,16 +713,18 @@ rdk_imu_err_t rdk_imu_bus_init(
             fd_gyro = open(dev_path, O_RDWR);
             if(fd_gyro<0)return RDK_IMU_OPEN_FILE_ERR;
 
-            ret = spi_check_chip_id(fd_accel, 
+            ret = spi_check_chip_id_multi(fd_accel, 
                     bus_info.bus.spi.accel.speed_hz, 
-                    BMI088_ACCEL_CHIP_REG, 
-                    BMI088_SPI_ACCEL_RD_DUMMY, 
-                    BMI088_ACCEL_CHIP_ID)
-                | spi_check_chip_id(fd_gyro, 
+                    IMU_ACCEL_REG_CHIP_ID, 
+                    IMU_SPI_ACCEL_RD_DUMMY, 
+                    IMU_ACCEL_CHIP_ID,
+                    10)
+                | spi_check_chip_id_multi(fd_gyro, 
                     bus_info.bus.spi.gyro.speed_hz, 
-                    BMI088_GYRO_CHIP_REG, 
-                    BMI088_SPI_ACCEL_RD_DUMMY, 
-                    BMI088_GYRO_CHIP_ID);
+                    IMU_GYRO_REG_CHIP_ID, 
+                    IMU_SPI_ACCEL_RD_DUMMY, 
+                    IMU_GYRO_CHIP_ID,
+                    10);
 
             close(fd_accel);
             close(fd_gyro);
@@ -728,9 +754,9 @@ rdk_imu_err_t rdk_imu_bus_init(
         st->accel_bus.fd = open(dev_path, O_RDWR);
         if(st->accel_bus.fd < 0)return RDK_IMU_OPEN_FILE_ERR;
 
-        st->accel_bus.speed_hz = bus_info.bus.spi.gyro.speed_hz;
-        st->accel_bus.rd_dummy = BMI088_SPI_ACCEL_RD_DUMMY;
-        st->accel_bus.wr_dummy = BMI088_SPI_ACCEL_WR_DUMMY;
+        st->accel_bus.speed_hz = bus_info.bus.spi.accel.speed_hz;
+        st->accel_bus.rd_dummy = IMU_SPI_ACCEL_RD_DUMMY;
+        st->accel_bus.wr_dummy = IMU_SPI_ACCEL_WR_DUMMY;
         st->accel_bus.ops = &spi_ops;
 
         snprintf(dev_path, sizeof(dev_path), "/dev/spidev%u.%u", bus_info.bus.spi.gyro.bus, bus_info.bus.spi.gyro.cs);
@@ -738,11 +764,11 @@ rdk_imu_err_t rdk_imu_bus_init(
         if(st->gyro_bus.fd < 0)return RDK_IMU_OPEN_FILE_ERR;
 
         st->gyro_bus.speed_hz = bus_info.bus.spi.gyro.speed_hz;
-        st->gyro_bus.rd_dummy = BMI088_SPI_GYRO_RD_DUMMY;
-        st->gyro_bus.wr_dummy = BMI088_SPI_GYRO_WR_DUMMY;
+        st->gyro_bus.rd_dummy = IMU_SPI_GYRO_RD_DUMMY;
+        st->gyro_bus.wr_dummy = IMU_SPI_GYRO_WR_DUMMY;
         st->gyro_bus.ops = &spi_ops;
 
-        uint8_t mode = RDK_IMU_SPID_MODE;
+        uint8_t mode = RDK_IMU_SPI_MODE;
         ioctl(st->accel_bus.fd, SPI_IOC_WR_MODE, &mode);
         ioctl(st->gyro_bus.fd, SPI_IOC_WR_MODE, &mode);
     }

@@ -148,7 +148,7 @@ where:
 Example: for RDK X5 default I2C speed f_I2C = 100 kHz, the theoretical maximum sum ODR is:
 
 $$
-	ext{ODR}_{\text{sum}} \approx \frac{100000}{2 \times 6 \times 9} \approx 1042\,\text{Hz}
+	ext{ODR}_{\text{sum}} \approx \frac{100000}{2 \times 6 \times 9} \approx 1042\text{Hz}
 $$
 
 Therefore, the sum of accelerometer and gyroscope ODRs should not exceed about 1042 Hz. In real applications, also consider other devices on the bus and interrupt handling overhead; it's recommended to leave some margin.

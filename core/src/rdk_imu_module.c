@@ -56,6 +56,8 @@ rdk_imu_state_t *rdk_imu_create_default(
 rdk_imu_err_t rdk_imu_destroy(
     rdk_imu_state_t *st)
 {
+    if(!st)return RDK_IMU_ERR_PARAM；
+
     if(st->imu_fifo.buffer)free(st->imu_fifo.buffer);
 
     if(st)free(st);
@@ -411,7 +413,7 @@ rdk_imu_err_t rdk_imu_device_deinit(
 {
     if(!st)return RDK_IMU_ERR_PARAM;
 
-    if(st->enable)return RDK_IMU_DEVICE_ENABLING;
+    if(st->enable)return RDK_IMU_DEVICE_BUSY;
 
     /* 释放 GPIO 线（注意共用线不要重复释放） */
     if(st->accel_drdy_gpio_line){
@@ -570,7 +572,12 @@ rdk_imu_err_t rdk_imu_enable(
     if(!st)return RDK_IMU_ERR_PARAM;
 
     /* 防止重复 enable */
-    if(st->enable)return RDK_IMU_DEVICE_ENABLING;
+    pthread_mutex_lock(&st->mutex) /* 消除竞态条件 */
+    if(st->enable){
+        pthread_mutex_unlock(&st->mutex)
+        return RDK_IMU_DEVICE_BUSY;
+    }
+    pthread_mutex_unlock(&st->mutex)
     
     pthread_attr_t attr;
     struct sched_param param;
@@ -685,9 +692,13 @@ static void interpolate_3axis(
         out->timestamp_ns = target_ns;
         return;
     }
-    
-    float ratio = (float)(target_ns - prev->timestamp_ns) /
-                   (float)(next->timestamp_ns - prev->timestamp_ns);
+
+    /* 防止时间戳无符号下溢出 */
+    int64_t dt = (int64_t)(target_ns - prev->timestamp_ns);
+    int64_t range = (int64_t)(next->timestamp_ns - prev->timestamp_ns);
+    float ratio = (float)dt / (float)range;  
+    // float ratio = (float)(target_ns - prev->timestamp_ns) /
+    //                (float)(next->timestamp_ns - prev->timestamp_ns);
 
     out->x = prev->x + (next->x - prev->x) * ratio;
     out->y = prev->y + (next->y - prev->y) * ratio;
@@ -901,10 +912,10 @@ int main(){
 
     config.accel_bwp   = RDK_IMU_OSR4;
     config.accel_range = RDK_IMU_ACCEL_24G;
-    config.accel_odr   = RDK_IMU_ACCEL_200;
+    config.accel_odr   = RDK_IMU_ACCEL_100;
 
     config.gyro_range     = RDK_IMU_GYRO_2000DPS;
-    config.gyro_bandwidth = RDK_IMU_ODR200_BW23;
+    config.gyro_bandwidth = RDK_IMU_ODR400_BW47;
 
     config.fifo_length = 256;
     config.fifo_mode   = RDK_IMU_FIFO_OVERWRITE;

@@ -114,7 +114,7 @@ typedef enum {
     RDK_IMU_GPIO_INIT_FAILED,
     RDK_IMU_FIFO_FULL,
     RDK_IMU_FIFO_EMPTY,
-    RDK_IMU_DEVICE_ENABLING,
+    RDK_IMU_DEVICE_BUSY,
     RDK_IMU_THREAD_CREATE_FAILED,
     RDK_IMU_FIFO_ALLOC_FAILED,
 }rdk_imu_err_t;
@@ -298,6 +298,8 @@ typedef struct rdk_imu_fifo_s{
     unsigned int tail; 
     rdk_imu_fifo_mode_t mode;
 }rdk_imu_fifo_t;
+
+struct gpiod_chip; struct gpiod_line;z
 
 typedef struct rdk_imu_state_s{
     rdk_imu_bus_t accel_bus;

@@ -201,14 +201,14 @@ static void *rdk_imu_accel_irq_thread(
 {
     rdk_imu_state_t *st = (rdk_imu_state_t *)arg;
     struct timespec timeout = {
-        .tv_sec = st->irq_thread_timeout_ns / 1000000000, 
-        .tv_nsec = st->irq_thread_timeout_ns % 1000000000,
+        .tv_sec = st->irq_thread_timeout_ns / 100000000, 
+        .tv_nsec = st->irq_thread_timeout_ns % 100000000,
     };
 
     while(st->accel_running){
         int wait_ret = gpiod_line_event_wait(st->accel_drdy_gpio_line, &timeout);
         if(wait_ret < 0){
-            // perror("gpiod_line_event_wait (accel)");
+            perror("gpiod_line_event_wait (accel)");
             break;   // 发生严重错误，退出线程
         }
         else if(wait_ret == 0){
@@ -246,8 +246,8 @@ static void *rdk_imu_gyro_irq_thread(
 {
     rdk_imu_state_t *st = (rdk_imu_state_t *)arg;
     struct timespec timeout = {
-        .tv_sec = st->irq_thread_timeout_ns / 1000000000, 
-        .tv_nsec = st->irq_thread_timeout_ns % 1000000000,
+        .tv_sec = st->irq_thread_timeout_ns / 100000000, 
+        .tv_nsec = st->irq_thread_timeout_ns % 100000000,
     };
 
     while(st->gyro_running){
@@ -811,7 +811,7 @@ rdk_imu_err_t rdk_imu_read_fused(
         pthread_mutex_lock(&st->mutex);
         while(rdk_imu_fifo_count(&st->imu_fifo) < 1){
             pthread_mutex_unlock(&st->mutex);
-            sleep_ms(100);
+            sleep_ms(10);
             pthread_mutex_lock(&st->mutex);
         }
         // pthread_mutex_unlock(&st->mutex);

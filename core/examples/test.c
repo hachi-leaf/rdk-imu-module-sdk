@@ -1,98 +1,103 @@
+/**
+ * Copyright (c) 2026 Leaf. D-Robotics.
+ * SPDX-License-Identifier: MIT
+ */
 #include <stdio.h>
-#include <stdint.h>
+#include <stdlib.h>
+#include <unistd.h>
+#include <signal.h>
+#include <inttypes.h>
+
 #include "rdkimu.h"
 
+static volatile int keep_running = 1;
 
-int main(){
-    rdk_imu_err_t ret;
+static void sigint_handler(int sig) {
+    (void)sig;
+    keep_running = 0;
+}
+
+int main(void) {
+    signal(SIGINT, sigint_handler);
 
     rdk_imu_state_t *st = rdk_imu_create_default();
-    if (!st) {
-        printf("create failed\n");
-        return -1;
+    if(!st){
+        fprintf(stderr, "create failed\n");
+        return 1;
     }
 
-    rdk_imu_bus_info_t bus_info;
-    bus_info.interface = RDK_IMU_AUTO;
-    bus_info.bus.spi.accel.speed_hz = 1000000;
-    bus_info.bus.spi.gyro.speed_hz  = 1000000;
+    /* 总线自动扫描 */
+    rdk_imu_bus_info_t bus;
+    bus.interface = RDK_IMU_AUTO;
+    bus.bus.spi.accel.speed_hz = 1000000;
+    bus.bus.spi.gyro.speed_hz = 1000000;
+    if(rdk_imu_bus_init(st, bus) != RDK_IMU_OK){
+        fprintf(stderr, "bus init failed\n");
+        rdk_imu_destroy(st);
+        return 1;
+    }
 
-    rdk_imu_config_t config;
-    config.accel_drdy_int       = RDK_IMU_INT1;
-    config.accel_int_gpio_mode  = RDK_IMU_PP_H;
-    config.accel_drdy_gpio_chip = 4;
-    config.accel_drdy_gpio_line = 2;
+    /* 设备配置 */
+    rdk_imu_config_t cfg = RDK_IMU_X5_DEFAULT_CONFIG;
+    if(rdk_imu_device_init(st, cfg) != RDK_IMU_OK){
+        fprintf(stderr, "device init failed\n");
+        rdk_imu_bus_deinit(st);
+        rdk_imu_destroy(st);
+        return 1;
+    }
 
-    config.gyro_drdy_int        = RDK_IMU_INT3;
-    config.gyro_int_gpio_mode   = RDK_IMU_PP_H;
-    config.gyro_drdy_gpio_chip  = 3;
-    config.gyro_drdy_gpio_line  = 12;
+    /* 使能中断采集 */
+    if(rdk_imu_enable(st) != RDK_IMU_OK){
+        fprintf(stderr, "enable failed\n");
+        rdk_imu_device_deinit(st);
+        rdk_imu_bus_deinit(st);
+        rdk_imu_destroy(st);
+        return 1;
+    }
 
-    config.irq_priority          = -1;
-    config.irq_thread_timeout_ns = 1000000000;
+    printf("Continuous fused read (Ctrl+C to stop)...\n");
 
-    config.accel_bwp   = RDK_IMU_OSR4;
-    config.accel_range = RDK_IMU_ACCEL_24G;
-    config.accel_odr   = RDK_IMU_ACCEL_100;
+    uint64_t last_ts = 0;
+    double freq = 0.0;
+    unsigned long long frame = 0;
 
-    config.gyro_range     = RDK_IMU_GYRO_2000DPS;
-    config.gyro_bandwidth = RDK_IMU_ODR400_BW47;
-
-    config.fifo_length = 256;
-    config.fifo_mode   = RDK_IMU_FIFO_OVERWRITE;
-
-    ret = rdk_imu_bus_init(st, bus_info);
-    printf("bus_init: %d\n", ret);
-    if (ret) goto cleanup;
-
-    ret = rdk_imu_device_init(st, config);
-    printf("device_init: %d\n", ret);
-    if (ret) goto cleanup;
-
-    ret = rdk_imu_enable(st);
-    printf("enable: %d\n", ret);
-    if (ret) goto cleanup;
-
-    printf("Reading fused data (Accel primary, Gyro interpolated)...\n");
-
-    uint64_t start_ts = 0;
-    int frame_count = 0;
-
-    while (1) {
+    while(keep_running){
         rdk_imu_6_axis_data_t data;
-        ret = rdk_imu_read_fused(st, &data, RDK_IMU_ACCEL, 20000000ULL);
-        if (ret != RDK_IMU_OK) {
-            printf("read_fused error: %d\n", ret);
+        rdk_imu_err_t ret = rdk_imu_read_fused(st, &data, RDK_IMU_ACCEL, 50000000ULL);
+        if(ret != RDK_IMU_OK){
+            if (ret != RDK_IMU_FIFO_EMPTY)
+                fprintf(stderr, "read_fused error: %d\n", ret);
             break;
         }
 
-        frame_count++;
-        if (frame_count == 1) {
-            start_ts = data.accel.timestamp_ns;  // 记录第一帧时间戳
+        uint64_t ts = data.accel.timestamp_ns;
+
+        if(last_ts != 0){
+            double dt = (ts - last_ts) / 1e9;
+            if(dt > 0.0)freq = 1.0 / dt;
         }
+        last_ts = ts;
 
-        // 每 100 帧计算并输出频率
-        if (frame_count % 100 == 0) {
-            uint64_t now_ts = data.accel.timestamp_ns;
-            double dt_sec = (now_ts - start_ts) / 1e9;
-            double freq = frame_count / dt_sec;
-            printf("--- Frames: %d, Freq: %.2f Hz ---\n", frame_count, freq);
+        uint32_t avail = 0;
+        rdk_imu_fifo_available(st, &avail);
 
-            // 重置计数器，从下一帧开始重新统计
-            frame_count = 0;
-            start_ts = 0;
-        }
-
-        // 输出当前帧数据（若不想刷屏可注释掉下面这行）
-        printf("A[%7.3f %7.3f %7.3f] G[%7.3f %7.3f %7.3f] ts: %llu\n",
+        printf("[%6llu] TS=%15" PRIu64 " | "
+               "Accel: %+8.4f %+8.4f %+8.4f | "
+               "Gyro: %+8.4f %+8.4f %+8.4f | "
+               "FIFO=%3u | Freq=%6.1f Hz\n",
+               frame, ts,
                data.accel.x, data.accel.y, data.accel.z,
                data.gyro.x, data.gyro.y, data.gyro.z,
-               (unsigned long long)data.accel.timestamp_ns);
+               avail, freq);
+        frame++;
     }
 
-cleanup:
+    /* 释放资源 */
     rdk_imu_disable(st);
     rdk_imu_device_deinit(st);
+    rdk_imu_bus_deinit(st);
     rdk_imu_destroy(st);
-    return ret;
+
+    printf("Stopped.\n");
+    return 0;
 }

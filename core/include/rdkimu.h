@@ -11,6 +11,26 @@
 #define RDK_IMU_CHIP RDK_IMU_BMI088
 #endif
 
+#define RDK_IMU_X5_DEFAULT_CONFIG { \
+    .accel_drdy_int = RDK_IMU_INT1, \
+    .accel_int_gpio_mode = RDK_IMU_PP_H, \
+    .accel_drdy_gpio_chip = 4, \
+    .accel_drdy_gpio_line = 2, \
+    .gyro_drdy_int = RDK_IMU_INT3, \
+    .gyro_int_gpio_mode = RDK_IMU_PP_H, \
+    .gyro_drdy_gpio_chip = 3, \
+    .gyro_drdy_gpio_line = 12, \
+    .irq_priority = -1, \
+    .irq_thread_timeout_ns = 1000000000, \
+    .accel_bwp = RDK_IMU_OSR4, \
+    .accel_range = RDK_IMU_ACCEL_24G, \
+    .accel_odr = RDK_IMU_ACCEL_400, \
+    .gyro_range = RDK_IMU_GYRO_2000DPS, \
+    .gyro_bandwidth = RDK_IMU_ODR400_BW47, \
+    .fifo_length = 256, \
+    .fifo_mode = RDK_IMU_FIFO_OVERWRITE, \
+}
+
 /* ============================== Error Code ============================== */
 typedef enum{
     RDK_IMU_OK = 0,

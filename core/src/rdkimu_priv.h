@@ -32,6 +32,7 @@
 #define IMU_ACCEL_ENABLE_VALUE    0x04
 #define IMU_ACCEL_REG_PWR_CONF    0x7C
 #define IMU_ACCEL_ACTIVATE_MODE   0x00
+#define IMU_ACCEL_ENABLE_SLEEP_MS 1
 
 /* Accel Config */
 #define IMU_ACCEL_REG_CONF   0x40

@@ -134,7 +134,7 @@ $$
 **示例**：对于 RDK X5 默认 I2C 速率 $f_{\text{I2C}} = 100\,\text{kHz}$，理论最大 ODR 之和约为：
 
 $$
-\text{ODR}_{\text{sum}} \approx \frac{100000}{2 \times 6 \times 9} \approx 1042\,\text{Hz}
+\text{ODR}_{\text{sum}} \approx \frac{100000}{2 \times 6 \times 9} \approx 1042\text{Hz}
 $$
 
 因此，加速度计与陀螺仪 ODR 频率的和不应大于 $1042\text{Hz}$。  

@@ -1,3 +1,5 @@
+# Copyright (c) 2026 Leaf. D-Robotics.
+# SPDX-License-Identifier: MIT
 cmake_minimum_required(VERSION 3.8)
 project(rdk_imu_module)
 

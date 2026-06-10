@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# Copyright (c) 2026 Leaf. D-Robotics.
+# SPDX-License-Identifier: MIT
 """
 IMU Timestamp Stability Test (Stress Test)
 

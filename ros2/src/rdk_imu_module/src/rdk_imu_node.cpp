@@ -1,3 +1,7 @@
+/*
+ * Copyright (c) 2026 Leaf. D-Robotics.
+ * SPDX-License-Identifier: MIT
+ */
 #include <chrono>
 #include <cmath>
 #include <memory>

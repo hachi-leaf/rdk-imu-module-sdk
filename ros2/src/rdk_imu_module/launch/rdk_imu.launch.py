@@ -1,3 +1,5 @@
+# Copyright (c) 2026 Leaf. D-Robotics.
+# SPDX-License-Identifier: MIT
 from launch import LaunchDescription
 from launch_ros.actions import Node
 

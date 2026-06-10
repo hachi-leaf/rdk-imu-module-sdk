@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
-from rdkimu import IMU
+# Copyright (c) 2026 Leaf. D-Robotics.
+# SPDX-License-Identifier: MIT
+from rdkimu import IMU, RDK_X5_DEFAULT_CONFIG
 from rdkimu.imu import RDK_IMU_DEVICE
 
 imu = IMU()
 try:
     imu.bus(spi_accel_speed=1000000, spi_gyro_speed=1000000)
-    imu.config()
+    imu.config(RDK_X5_DEFAULT_CONFIG)
     imu.enable()
 
     print("Continuous fused read (Ctrl+C to stop)...")

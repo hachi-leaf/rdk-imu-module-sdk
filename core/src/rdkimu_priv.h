@@ -1,6 +1,8 @@
 /**
  * Copyright (c) 2026 Leaf. D-Robotics.
  * SPDX-License-Identifier: MIT
+ *
+ * RDK IMU Module SDK 私有头文件
  */
 #ifndef __RDK_IMU_PRIV_H
 #define __RDK_IMU_PRIV_H

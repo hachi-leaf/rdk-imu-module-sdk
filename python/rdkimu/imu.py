@@ -1,6 +1,5 @@
-"""
-Python wrapper for librdkimu.so (RDK IMU C library).
-"""
+# Copyright (c) 2026 Leaf. D-Robotics.
+# SPDX-License-Identifier: MIT
 import ctypes
 import os
 from ctypes import (
@@ -164,10 +163,9 @@ class RDK_IMU_CONFIG(Structure):
         ("irq_thread_timeout_ns", c_uint64),
     ]
 
-
 # ---------------- Default configuration (same as RDK_IMU_X5_DEFAULT_CONFIG) ----------------
-DEFAULT_CONFIG = {
-    "accel_bwp":              RDK_IMU_ACCEL_BWP.OSR4,
+RDK_X5_DEFAULT_CONFIG = {
+    "accel_bwp":              RDK_IMU_ACCEL_BWP.NORMAL,
     "accel_odr":              RDK_IMU_ACCEL_ODR.RATE_400,
     "accel_range":            RDK_IMU_ACCEL_RANGE.RANGE_24G,
     "gyro_range":             RDK_IMU_GYRO_RANGE.DPS_2000,
@@ -186,6 +184,45 @@ DEFAULT_CONFIG = {
     "irq_thread_timeout_ns":  1000000000,
 }
 
+RDK_S100_DEFAULT_CONFIG = {
+    "accel_bwp":              RDK_IMU_ACCEL_BWP.OSR4,
+    "accel_odr":              RDK_IMU_ACCEL_ODR.RATE_400,
+    "accel_range":            RDK_IMU_ACCEL_RANGE.RANGE_24G,
+    "gyro_range":             RDK_IMU_GYRO_RANGE.DPS_2000,
+    "gyro_bandwidth":         RDK_IMU_GYRO_BANDWIDTH.ODR400_BW47,
+    # "accel_drdy_int":         RDK_IMU_ACCEL_DRDY_INT.INT1,
+    # "accel_int_gpio_mode":    RDK_IMU_GPIO_MODE.PP_H,
+    # "gyro_drdy_int":          RDK_IMU_GYRO_DRDY_INT.INT3,
+    # "gyro_int_gpio_mode":     RDK_IMU_GPIO_MODE.PP_H,
+    "accel_drdy_gpio_chip":   4,
+    "accel_drdy_gpio_line":   2,
+    "gyro_drdy_gpio_chip":    3,
+    "gyro_drdy_gpio_line":    12,
+    "fifo_length":            256,
+    "fifo_mode":              RDK_IMU_FIFO_MODE.OVERWRITE,
+    "irq_priority":           -1,
+    "irq_thread_timeout_ns":  1000000000,
+}
+
+RDK_S600_DEFAULT_CONFIG = {
+    "accel_bwp":              RDK_IMU_ACCEL_BWP.OSR4,
+    "accel_odr":              RDK_IMU_ACCEL_ODR.RATE_400,
+    "accel_range":            RDK_IMU_ACCEL_RANGE.RANGE_24G,
+    "gyro_range":             RDK_IMU_GYRO_RANGE.DPS_2000,
+    "gyro_bandwidth":         RDK_IMU_GYRO_BANDWIDTH.ODR400_BW47,
+    # "accel_drdy_int":         RDK_IMU_ACCEL_DRDY_INT.INT1,
+    # "accel_int_gpio_mode":    RDK_IMU_GPIO_MODE.PP_H,
+    # "gyro_drdy_int":          RDK_IMU_GYRO_DRDY_INT.INT3,
+    # "gyro_int_gpio_mode":     RDK_IMU_GPIO_MODE.PP_H,
+    "accel_drdy_gpio_chip":   4,
+    "accel_drdy_gpio_line":   2,
+    "gyro_drdy_gpio_chip":    3,
+    "gyro_drdy_gpio_line":    12,
+    "fifo_length":            256,
+    "fifo_mode":              RDK_IMU_FIFO_MODE.OVERWRITE,
+    "irq_priority":           -1,
+    "irq_thread_timeout_ns":  1000000000,
+}
 
 class IMU:
     """
@@ -326,31 +363,33 @@ class IMU:
         ret = self._lib.rdk_imu_bus_init(self._handle, bus_info)
         self._check_ret(ret, "rdk_imu_bus_init failed")
 
-    def config(self, config_dict=None):
+    def config(self, config_dict):
         """
         Initialize the IMU device with configuration parameters.
-        
+
         Args:
             config_dict: A dict with key-value pairs to override defaults.
-                        If None, the default X5 configuration is used.
+                        Must be a dictionary (even empty) to use defaults.
                         Example:
                             imu.config({
                                 'accel_range': RDK_IMU_ACCEL_RANGE.RANGE_12G,
                                 'gyro_bandwidth': RDK_IMU_GYRO_BANDWIDTH.ODR100_BW32,
                             })
+                        or simply imu.config({}) for full default X5 configuration.
         """
+        if not isinstance(config_dict, dict):
+            raise TypeError("config_dict must be a dict")
+
         cfg = RDK_IMU_CONFIG()
         # fill in defaults
-        for field_name, default_val in DEFAULT_CONFIG.items():
-            setattr(cfg, field_name, int(default_val))
+        # for field_name, default_val in DEFAULT_CONFIG.items():
+        #     setattr(cfg, field_name, int(default_val))
 
-        if config_dict is not None:
-            if not isinstance(config_dict, dict):
-                raise TypeError("config_dict must be a dict")
-            for key, value in config_dict.items():
-                if not hasattr(cfg, key):
-                    raise KeyError(f"Invalid config parameter: {key}")
-                setattr(cfg, key, int(value))
+        # override with user-provided values
+        for key, value in config_dict.items():
+            if not hasattr(cfg, key):
+                raise KeyError(f"Invalid config parameter: {key}")
+            setattr(cfg, key, int(value))
 
         ret = self._lib.rdk_imu_device_init(self._handle, cfg)
         self._check_ret(ret, "rdk_imu_device_init failed")

@@ -1,3 +1,5 @@
+# Copyright (c) 2026 Leaf. D-Robotics.
+# SPDX-License-Identifier: MIT
 CC       = gcc
 AR       = ar
 CFLAGS   = -Wall -Wextra -O2 -I include -I src
@@ -15,11 +17,12 @@ LIB_SRCS = $(SRC_DIR)/rdkimu.c $(SRC_DIR)/rdkimu_bus.c
 TST_SRCS = $(TST_DIR)/test.c
 
 VERSION  := $(shell cat ../version)
+MAJOR    := $(shell echo $(VERSION) | cut -d. -f1)
 
 LIB_NAME  = rdkimu
 STATIC_LIB = $(LIB_DIR)/lib$(LIB_NAME).a
 SHARED_LIB = $(LIB_DIR)/lib$(LIB_NAME).so.$(VERSION)
-SONAME     = lib$(LIB_NAME).so.1
+SONAME     = lib$(LIB_NAME).so.$(MAJOR)
 
 OBJS_STATIC = $(patsubst $(SRC_DIR)/%.c, $(BLD_DIR)/static/%.o, $(LIB_SRCS))
 OBJS_SHARED = $(patsubst $(SRC_DIR)/%.c, $(BLD_DIR)/shared/%.o, $(LIB_SRCS))
@@ -67,8 +70,9 @@ install: lib
 	install -m 644 $(INC_DIR)/rdkimu.h $(DESTDIR)$(PREFIX)/include/
 	install -d $(DESTDIR)$(PREFIX)/lib
 	install -m 755 $(SHARED_LIB) $(DESTDIR)$(PREFIX)/lib/
-	ln -sf lib$(LIB_NAME).so.$(VERSION) $(DESTDIR)$(PREFIX)/lib/$(SONAME)
-	ln -sf $(SONAME) $(DESTDIR)$(PREFIX)/lib/lib$(LIB_NAME).so
+	rm -f $(DESTDIR)$(PREFIX)/lib/$(SONAME) $(DESTDIR)$(PREFIX)/lib/lib$(LIB_NAME).so
+	ln -s lib$(LIB_NAME).so.$(VERSION) $(DESTDIR)$(PREFIX)/lib/$(SONAME)
+	ln -s $(SONAME) $(DESTDIR)$(PREFIX)/lib/lib$(LIB_NAME).so
 	@echo "Library and header installed to $(PREFIX)"
 
 uninstall:

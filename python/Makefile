@@ -1,10 +1,12 @@
+# Copyright (c) 2026 Leaf. D-Robotics.
+# SPDX-License-Identifier: MIT
 .PHONY: wheel clean install uninstall
 
 wheel:
 	python setup.py bdist_wheel
 
 install: wheel
-	pip install $$(ls -t dist/*.whl | head -1)
+	pip install --force-reinstall $$(ls -t dist/*.whl | head -1)
 
 uninstall:
 	pip uninstall -y rdkimu

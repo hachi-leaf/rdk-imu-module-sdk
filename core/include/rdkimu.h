@@ -22,7 +22,7 @@
     .gyro_drdy_gpio_line = 12, \
     .irq_priority = -1, \
     .irq_thread_timeout_ns = 1000000000, \
-    .accel_bwp = RDK_IMU_OSR4, \
+    .accel_bwp = RDK_IMU_NORMAL, \
     .accel_range = RDK_IMU_ACCEL_24G, \
     .accel_odr = RDK_IMU_ACCEL_400, \
     .gyro_range = RDK_IMU_GYRO_2000DPS, \

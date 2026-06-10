@@ -3,7 +3,7 @@
     <img src="images/d_robotics_logo.png" alt="" width="180"/>
   </a>
 
-简体中文 | [English](README_en.md)
+简体中文 | [English](README.md)
 
 # RDK IMU Module SDK
 

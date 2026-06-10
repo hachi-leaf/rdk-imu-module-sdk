@@ -137,7 +137,7 @@ $$
 \text{ODR}_{\text{sum}} \approx \frac{100000}{2 \times 6 \times 9} \approx 1042\,\text{Hz}
 $$
 
-因此，加速度计与陀螺仪 ODR 频率的和不应大于 $1042\,\text{Hz}$。  
+因此，加速度计与陀螺仪 ODR 频率的和不应大于 $1042\text{Hz}$。  
 实际应用中，还需考虑总线其他设备、中断响应延迟等因素，建议留出部分余裕量。
 
 ### 对于 SPI
@@ -150,12 +150,12 @@ $$
 
 其中：
 - $f_{\text{SPI}}$：用户设定的 SPI 时钟频率（单位：Hz，例如 1 MHz）；
-- $B_{\text{accel}}$、$B_{\text{gyro}}$：读取加速度计和陀螺仪时，单次 SPI 传输的总字节数，此处为 7 和 8.
+- $B_{\text{accel、gyro}}$：读取加速度计和陀螺仪时，单次 SPI 传输的总字节数，此处为 7 和 8.
 
 **示例**：对于 RDK X5 默认 SPI 速率 $f_{\text{SPI}} = 1\,\text{MHz}$，理论最大 ODR 之和约为：
 
 $$
-\text{ODR}_{\text{sum}} \approx \frac{1000000}{ (7 + 8) \times 8 } = \frac{1000000}{112} \approx 8333\,\text{Hz}
+\text{ODR}_{\text{sum}} \approx \frac{1000000}{ (7 + 8) \times 8 } = \frac{1000000}{112} \approx 8333\text{Hz}
 $$
 
 ## 硬件时间戳

@@ -1,6 +1,6 @@
 <div align="center">
   <a href="https://developer.d-robotics.cc">
-    <img src="images/d_robotics_logo.png" alt="" width="180"/>
+    <img src="doc/d_robotics_logo.png" alt="" width="180"/>
   </a>
 
 [简体中文](README_cn.md) | English
@@ -9,7 +9,7 @@
 
 The RDK IMU module is implemented with Bosch Sensortec’s high-performance 6-axis inertial measurement unit (IMU), the BMI088, which contains a tri-axis gyroscope and a tri-axis accelerometer, both with 16-bit resolution. The BMI088 is designed for applications that require high accuracy and vibration robustness, making it especially suitable for drones and robots operating in high-vibration environments. The BMI088 supports extended ranges of ±24 g for acceleration and ±2000°/s for angular rate. It also demonstrates excellent temperature drift characteristics (low TCO/TCS) and comes factory-calibrated for stable attitude and motion sensing.
 
-<img src="images/rdk_imu_product.png" alt="" width="400"/>
+<img src="doc/rdk_imu_product.png" alt="" width="400"/>
 
 rdk-imu-module-sdk is a software development kit created by D‑Robotics for the RDK IMU module. It includes C, Python and ROS 2 components. No kernel driver is required, hardware timestamping is supported, and the build process is simple. Developers can use this SDK with their preferred language, quickly explore the RDK IMU module’s features, and build their own robotics applications on top of it.
 
@@ -25,7 +25,7 @@ Using the RDK X5 as an example, the connection is shown below:
 
 <div align="center">
 
-<img src="images/install.png" alt="" width="750"/>
+<img src="doc/install.png" alt="" width="750"/>
 
 </div>
 
@@ -176,7 +176,7 @@ $$
 The SDK’s timestamps come from user‑space hardware interrupt timestamps via `gpiod`. The figure below shows the IMU timestamp interval under combined CPU load and memory bandwidth stress tests.
 
 <div align="center">
-    <img src="images/timestamp_test.png" alt=""/>
+    <img src="doc/timestamp_test.png" alt=""/>
 </div>
 
 ---
